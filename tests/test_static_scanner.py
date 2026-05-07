@@ -12,6 +12,7 @@ from engines.static_scanner import (
     parse_requirement_file,
     parse_uv_lock_file,
 )
+import engines.static_scanner as static_scanner
 
 
 def test_parse_pinned_requirements_and_report_unsupported_lines(tmp_path):
@@ -208,3 +209,71 @@ version = "2.20.0"
         ("requests", "2.20.0", "uv.lock"),
     ]
     assert errors == []
+
+
+def test_select_fixed_version_from_osv_affected_ranges():
+    vuln = {
+        "affected": [
+            {
+                "package": {"name": "requests", "ecosystem": "PyPI"},
+                "ranges": [
+                    {
+                        "events": [
+                            {"introduced": "0"},
+                            {"fixed": "2.32.4"},
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    assert static_scanner._select_fixed_version(vuln, "requests", "2.20.0") == "2.32.4"
+
+
+def test_select_fixed_version_returns_none_when_osv_has_no_fix():
+    vuln = {
+        "affected": [
+            {
+                "package": {"name": "requests", "ecosystem": "PyPI"},
+                "ranges": [
+                    {
+                        "events": [
+                            {"introduced": "0"},
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    assert static_scanner._select_fixed_version(vuln, "requests", "2.20.0") is None
+
+
+def test_select_fixed_version_ignores_unrelated_packages_and_downgrades():
+    vuln = {
+        "affected": [
+            {
+                "package": {"name": "other-package", "ecosystem": "PyPI"},
+                "ranges": [{"events": [{"introduced": "0"}, {"fixed": "9.9.9"}]}],
+            },
+            {
+                "package": {"name": "requests", "ecosystem": "npm"},
+                "ranges": [{"events": [{"introduced": "0"}, {"fixed": "8.8.8"}]}],
+            },
+            {
+                "package": {"name": "requests", "ecosystem": "PyPI"},
+                "ranges": [
+                    {
+                        "events": [
+                            {"introduced": "0"},
+                            {"fixed": "2.10.0"},
+                            {"fixed": "2.32.4"},
+                        ]
+                    }
+                ],
+            },
+        ]
+    }
+
+    assert static_scanner._select_fixed_version(vuln, "requests", "2.20.0") == "2.32.4"
