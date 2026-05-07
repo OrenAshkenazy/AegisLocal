@@ -7,7 +7,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Callable, Iterable, List, Optional, Sequence, Tuple
 
 import aiohttp
 
@@ -197,18 +197,32 @@ def _select_vulnerability_id(vuln: dict) -> str:
     return str(vuln.get("id") or "UNKNOWN")
 
 
-async def run_static_scan(project_root: Path) -> Tuple[List[Finding], List[ExecutionError]]:
+async def run_static_scan(
+    project_root: Path,
+    on_progress: Optional[Callable[[str], None]] = None,
+) -> Tuple[List[Finding], List[ExecutionError]]:
     requirement_files = discover_requirement_files(project_root)
     dependencies, errors = parse_requirement_files(requirement_files)
 
     if not dependencies:
         return [], errors
 
+    async def _query_and_report(
+        session: aiohttp.ClientSession,
+        dependency: Dependency,
+        semaphore: asyncio.Semaphore,
+    ) -> Tuple[List[Finding], List[ExecutionError]]:
+        result = await _query_osv(session, dependency, semaphore)
+        vuln_count = len(result[0])
+        if on_progress:
+            on_progress(f"{dependency.name}=={dependency.version} -- {vuln_count} vuln{'s' if vuln_count != 1 else ''}")
+        return result
+
     timeout = aiohttp.ClientTimeout(total=OSV_TIMEOUT_SECONDS)
     semaphore = asyncio.Semaphore(STATIC_CONCURRENCY)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         results = await asyncio.gather(
-            *(_query_osv(session, dependency, semaphore) for dependency in dependencies)
+            *(_query_and_report(session, dependency, semaphore) for dependency in dependencies)
         )
 
     findings: List[Finding] = []

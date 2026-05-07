@@ -8,7 +8,7 @@ import sys
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import aiohttp
 from pydantic import ValidationError
@@ -416,6 +416,7 @@ async def run_dynamic_scan(
     target_timeout_seconds: float = TARGET_TIMEOUT_SECONDS,
     dynamic_concurrency: int = DYNAMIC_CONCURRENCY,
     include_evidence: bool = False,
+    on_progress: Optional[Callable[[str], None]] = None,
 ) -> Tuple[List[GroupedFinding], List[ExecutionError], List[DynamicEvidence]]:
     payloads, errors = load_payloads(payload_file)
     if errors and not payloads:
@@ -429,20 +430,24 @@ async def run_dynamic_scan(
             model=fallback_judge_model,
         )
 
+    async def _evaluate_and_report(payload: Payload) -> PayloadEvaluation:
+        result = await _evaluate_payload(
+            payload,
+            target_endpoint,
+            target_model,
+            primary_judge,
+            fallback_judge,
+            semaphore,
+            target_timeout_seconds,
+        )
+        if on_progress:
+            verdict = result.verdict or "ERROR"
+            on_progress(f"payload {payload.id} -- {verdict}")
+        return result
+
     semaphore = asyncio.Semaphore(dynamic_concurrency)
     evaluations = await asyncio.gather(
-        *(
-            _evaluate_payload(
-                payload,
-                target_endpoint,
-                target_model,
-                primary_judge,
-                fallback_judge,
-                semaphore,
-                target_timeout_seconds,
-            )
-            for payload in payloads
-        )
+        *(_evaluate_and_report(payload) for payload in payloads)
     )
 
     for evaluation in evaluations:

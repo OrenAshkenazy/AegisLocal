@@ -2,24 +2,39 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import time
+from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
 from typing import Optional
 
 import typer
 
+from core.console import ScanConsole
 from core.models import ExecutionStatus, ScanReport, SecurityResult
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
     TARGET_TIMEOUT_SECONDS,
+    load_payloads,
     run_dynamic_scan,
 )
-from engines.static_scanner import run_static_scan
+from engines.static_scanner import (
+    discover_requirement_files,
+    parse_requirement_files,
+    run_static_scan,
+)
 
 
 DEFAULT_ENDPOINT = "http://localhost:11434/v1/chat/completions"
 DEFAULT_MODEL = "llama3.1:8b"
 
 app = typer.Typer(help="AegisLocal local AI security scanner.")
+
+
+def _get_version() -> str:
+    try:
+        return pkg_version("aegislocal")
+    except PackageNotFoundError:
+        return "0.1.0"
 
 
 @app.callback()
@@ -41,6 +56,7 @@ def build_report(
     dynamic_findings,
     dynamic_evidence,
     execution_errors,
+    scan_duration_seconds: float = 0.0,
 ) -> ScanReport:
     has_findings = bool(static_findings or dynamic_findings)
     execution_status = (
@@ -81,6 +97,8 @@ def build_report(
         dynamic_evidence=dynamic_evidence,
         execution_errors=execution_errors,
         passed_audit=passed_audit,
+        scan_duration_seconds=scan_duration_seconds,
+        scanner_version=_get_version(),
     )
 
 
@@ -96,20 +114,37 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    console: ScanConsole,
 ) -> ScanReport:
-    static_findings, static_errors = await run_static_scan(project_root)
-    dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
-        payload_file=payload_file,
-        target_endpoint=target_endpoint,
-        target_model=target_model,
-        judge_endpoint=judge_endpoint,
-        judge_model=judge_model,
-        fallback_judge_endpoint=fallback_judge_endpoint,
-        fallback_judge_model=fallback_judge_model,
-        target_timeout_seconds=target_timeout_seconds,
-        dynamic_concurrency=dynamic_concurrency,
-        include_evidence=include_evidence,
-    )
+    start = time.monotonic()
+
+    # Pre-discover counts for progress bars
+    requirement_files = discover_requirement_files(project_root)
+    deps, _ = parse_requirement_files(requirement_files)
+    payloads, _ = load_payloads(payload_file)
+
+    with console.static_progress(len(deps)) as static_cb:
+        static_findings, static_errors = await run_static_scan(
+            project_root, on_progress=static_cb,
+        )
+
+    with console.dynamic_progress(len(payloads)) as dynamic_cb:
+        dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
+            payload_file=payload_file,
+            target_endpoint=target_endpoint,
+            target_model=target_model,
+            judge_endpoint=judge_endpoint,
+            judge_model=judge_model,
+            fallback_judge_endpoint=fallback_judge_endpoint,
+            fallback_judge_model=fallback_judge_model,
+            target_timeout_seconds=target_timeout_seconds,
+            dynamic_concurrency=dynamic_concurrency,
+            include_evidence=include_evidence,
+            on_progress=dynamic_cb,
+        )
+
+    duration = time.monotonic() - start
+
     return build_report(
         target_endpoint=target_endpoint,
         target_model=target_model,
@@ -124,6 +159,7 @@ async def run_scan(
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
         execution_errors=[*static_errors, *dynamic_errors],
+        scan_duration_seconds=round(duration, 2),
     )
 
 
@@ -187,7 +223,31 @@ def scan(
         "--include-evidence",
         help="Include sanitized target response excerpts for failed or unknown dynamic payloads.",
     ),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Suppress all terminal UI. JSON report only.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show per-item status lines during scan.",
+    ),
+    output_file: Optional[Path] = typer.Option(
+        None,
+        "--output-file",
+        "-o",
+        help="Write JSON report to file (in addition to stdout).",
+    ),
 ) -> None:
+    if quiet and verbose:
+        typer.echo("Error: --quiet and --verbose are mutually exclusive.", err=True)
+        raise typer.Exit(code=2)
+
+    console = ScanConsole(quiet=quiet, verbose=verbose)
+
     report = asyncio.run(
         run_scan(
             project_root=project_root,
@@ -201,9 +261,18 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            console=console,
         )
     )
-    typer.echo(report.model_dump_json(indent=2))
+
+    console.print_summary(report)
+
+    report_json = report.model_dump_json(indent=2)
+    typer.echo(report_json)
+
+    if output_file is not None:
+        output_file.write_text(report_json, encoding="utf-8")
+
     raise typer.Exit(code=0 if report.passed_audit else 1)
 
 

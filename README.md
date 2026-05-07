@@ -226,6 +226,7 @@ Current categories:
 - RAG Context Manipulation
 - Policy Evasion
 - Harmful Instruction Compliance
+- Multi-Turn Setup Injection
 
 Each payload includes an `expected_behavior` field. During a dynamic scan,
 AegisLocal sends the payload to the target model, sends the payload and target
