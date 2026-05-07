@@ -409,6 +409,13 @@ async def _query_osv(
     findings: List[Finding] = []
     for vuln in data.get("vulns") or []:
         vulnerability_id = _select_vulnerability_id(vuln)
+        fixed_version = _select_fixed_version(vuln, dependency.name, dependency.version)
+        fix_available = fixed_version is not None
+        remediation = (
+            f"Upgrade {dependency.name} from {dependency.version} to {fixed_version}+."
+            if fixed_version
+            else "No fixed version is listed by OSV; review advisory references for mitigation or workaround guidance."
+        )
         findings.append(
             Finding(
                 severity=Severity.HIGH,
@@ -417,7 +424,9 @@ async def _query_osv(
                     f"{dependency.name}=={dependency.version} is affected by "
                     f"{vulnerability_id}."
                 ),
-                remediation="Upgrade the package to a non-vulnerable version.",
+                remediation=remediation,
+                fix_available=fix_available,
+                fixed_version=fixed_version,
                 package_name=dependency.name,
                 package_version=dependency.version,
                 vulnerability_id=vulnerability_id,
@@ -433,6 +442,43 @@ def _select_vulnerability_id(vuln: dict) -> str:
         if alias.startswith(("CVE-", "GHSA-")):
             return alias
     return str(vuln.get("id") or "UNKNOWN")
+
+
+def _select_fixed_version(
+    vuln: dict,
+    package_name: str,
+    current_version: str,
+) -> Optional[str]:
+    current_key = _version_sort_key(current_version)
+    fixed_versions: List[str] = []
+    for affected in vuln.get("affected") or []:
+        package = affected.get("package") or {}
+        if package.get("name", "").lower() != package_name.lower():
+            continue
+        if package.get("ecosystem") != "PyPI":
+            continue
+        for affected_range in affected.get("ranges") or []:
+            for event in affected_range.get("events") or []:
+                fixed = event.get("fixed")
+                if (
+                    isinstance(fixed, str)
+                    and fixed
+                    and _version_sort_key(fixed) > current_key
+                ):
+                    fixed_versions.append(fixed)
+    if not fixed_versions:
+        return None
+    return sorted(set(fixed_versions), key=_version_sort_key)[0]
+
+
+def _version_sort_key(version: str) -> Tuple[object, ...]:
+    parts: List[object] = []
+    for part in re.split(r"[.+_-]", version):
+        if part.isdigit():
+            parts.append((0, int(part)))
+        else:
+            parts.append((1, part))
+    return tuple(parts)
 
 
 async def run_static_scan(

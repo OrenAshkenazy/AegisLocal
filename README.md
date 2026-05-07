@@ -306,6 +306,19 @@ AegisLocal reads the resolved package entries directly.
 When a lockfile and `pyproject.toml` are present in the same directory,
 AegisLocal prefers the lockfile as the source of truth.
 
+Static findings include fixability metadata when OSV provides it:
+
+```json
+{
+  "fix_available": true,
+  "fixed_version": "2.32.4",
+  "remediation": "Upgrade requests from 2.20.0 to 2.32.4+."
+}
+```
+
+If OSV does not list a fixed version, `fix_available` is `false` and the
+remediation points the user to advisory-level mitigation or workaround guidance.
+
 Unsupported requirement or `pyproject.toml` dependency specs are reported as
 execution errors but do not stop the scan. Blank lines, full-line comments, and
 inline comments are ignored safely.

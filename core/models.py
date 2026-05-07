@@ -37,6 +37,8 @@ class Finding(BaseModel):
     category: str
     description: str
     remediation: Optional[str] = None
+    fix_available: Optional[bool] = None
+    fixed_version: Optional[str] = None
     package_name: Optional[str] = None
     package_version: Optional[str] = None
     vulnerability_id: Optional[str] = None
