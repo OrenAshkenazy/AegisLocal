@@ -1,3 +1,6 @@
+# Copyright 2026 Oren Ashkenazy
+# SPDX-License-Identifier: Apache-2.0
+
 from pathlib import Path
 
 from engines.static_scanner import discover_requirement_files, parse_requirement_file

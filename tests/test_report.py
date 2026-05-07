@@ -1,3 +1,6 @@
+# Copyright 2026 Oren Ashkenazy
+# SPDX-License-Identifier: Apache-2.0
+
 from core.models import ErrorSource, ExecutionError, Finding, Severity
 from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
 from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
