@@ -1,4 +1,12 @@
-# AegisLocal
+<p align="center">
+  <img src="assets/aegislocal-logo.png" alt="AegisLocal logo" width="260">
+</p>
+
+<h1 align="center">AegisLocal</h1>
+
+<p align="center">
+  Local-first security scanning for AI applications and local LLM deployments.
+</p>
 
 AegisLocal is a local-first security scanner for AI applications and local LLM
 deployments. It audits both dependency risk and model behavior from a single CLI
