@@ -18,8 +18,8 @@ from engines.dynamic_fuzzer import (
     run_dynamic_scan,
 )
 from engines.static_scanner import (
-    discover_requirement_files,
-    parse_requirement_files,
+    discover_manifest_files,
+    parse_manifest_files,
     run_static_scan,
 )
 
@@ -119,8 +119,8 @@ async def run_scan(
     start = time.monotonic()
 
     # Parse once, pass to engines to avoid redundant I/O
-    requirement_files = discover_requirement_files(project_root)
-    deps, dep_errors = parse_requirement_files(requirement_files)
+    manifest_files = discover_manifest_files(project_root)
+    deps, dep_errors = parse_manifest_files(manifest_files)
     payloads, payload_errors = load_payloads(payload_file)
 
     with console.static_progress(len(deps)) as static_cb:
@@ -173,7 +173,7 @@ def scan(
     project_root: Path = typer.Option(
         Path("."),
         "--project-root",
-        help="Project root to recursively scan for requirements.txt files.",
+        help="Project root to recursively scan for supported dependency manifests.",
     ),
     payload_file: Path = typer.Option(
         Path("data/payloads.json"),

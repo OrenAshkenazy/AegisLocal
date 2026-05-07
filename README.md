@@ -19,8 +19,8 @@ does not import heavyweight ML frameworks such as `torch`, `transformers`, or
 
 ## Key Features
 
-- **Static dependency scanning** for recursively discovered `requirements.txt`
-  files.
+- **Static dependency scanning** for recursively discovered Python dependency
+  manifests.
 - **OSV vulnerability lookups** for pinned Python dependencies.
 - **Dynamic LLM fuzzing** with adversarial prompts from `data/payloads.json`.
 - **LLM-as-judge evaluation** with optional fallback judge model support.
@@ -260,7 +260,7 @@ local behavior and dependency-risk baseline.
 | --- | --- | --- |
 | **LLM01: Prompt Injection** | Strong | Direct prompt injection, jailbreak/safety bypass, policy evasion, and RAG instruction-override payloads. |
 | **LLM02: Sensitive Information Disclosure** | Medium | PII extraction, PII leakage, sensitive data exfiltration, and private-context disclosure probes. |
-| **LLM03: Supply Chain** | Medium | Recursively scans pinned Python dependencies in `requirements.txt` via OSV. |
+| **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV. |
 | **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, dataset, or model provenance checks yet. |
 | **LLM05: Improper Output Handling** | Partial | Insecure code generation probes are included, but AegisLocal does not yet test downstream application sinks such as SQL, shell, browser, or HTML rendering contexts. |
 | **LLM06: Excessive Agency** | Partial | Tool-abuse prompts test model intent, but there is no real tool sandbox or agent execution simulation yet. |
@@ -279,19 +279,36 @@ and explicit resource-exhaustion probes.
 
 ## Static Scan Behavior
 
-The static scanner recursively discovers `requirements.txt` files while
-excluding common generated or noisy directories such as `.git`, `.venv`,
+The static scanner recursively discovers supported Python dependency manifests
+while excluding common generated or noisy directories such as `.git`, `.venv`,
 `node_modules`, `dist`, `build`, and `tests/fixtures`.
 
-Version 1 audits pinned requirements only:
+Supported manifests:
+
+- `requirements.txt`
+- `requirements-*.txt`
+- `requirements.*.txt`
+- `pyproject.toml`
+- `uv.lock`
+- `poetry.lock`
+
+For requirement and `pyproject.toml` inputs, AegisLocal audits exact pinned
+dependencies only:
 
 ```text
 requests==2.20.0
 flask==2.2.5
 ```
 
-Unsupported lines are reported as execution errors but do not stop the scan.
-Blank lines, full-line comments, and inline comments are ignored safely.
+For `uv.lock` and `poetry.lock`, package versions are already resolved, so
+AegisLocal reads the resolved package entries directly.
+
+When a lockfile and `pyproject.toml` are present in the same directory,
+AegisLocal prefers the lockfile as the source of truth.
+
+Unsupported requirement or `pyproject.toml` dependency specs are reported as
+execution errors but do not stop the scan. Blank lines, full-line comments, and
+inline comments are ignored safely.
 
 ## Development
 
