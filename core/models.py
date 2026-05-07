@@ -95,3 +95,5 @@ class ScanReport(BaseModel):
     dynamic_evidence: List[DynamicEvidence] = Field(default_factory=list)
     execution_errors: List[ExecutionError] = Field(default_factory=list)
     passed_audit: bool
+    scan_duration_seconds: float = 0.0
+    scanner_version: str = "unknown"

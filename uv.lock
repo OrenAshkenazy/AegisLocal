@@ -9,6 +9,8 @@ source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "pydantic" },
+    { name = "rich" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typer" },
 ]
 
@@ -24,6 +26,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23" },
+    { name = "rich", specifier = ">=13" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
     { name = "typer", specifier = ">=0.9" },
 ]
 provides-extras = ["test"]
