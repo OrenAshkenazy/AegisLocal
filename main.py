@@ -118,14 +118,17 @@ async def run_scan(
 ) -> ScanReport:
     start = time.monotonic()
 
-    # Pre-discover counts for progress bars
+    # Parse once, pass to engines to avoid redundant I/O
     requirement_files = discover_requirement_files(project_root)
-    deps, _ = parse_requirement_files(requirement_files)
-    payloads, _ = load_payloads(payload_file)
+    deps, dep_errors = parse_requirement_files(requirement_files)
+    payloads, payload_errors = load_payloads(payload_file)
 
     with console.static_progress(len(deps)) as static_cb:
         static_findings, static_errors = await run_static_scan(
-            project_root, on_progress=static_cb,
+            project_root,
+            on_progress=static_cb,
+            dependencies=deps,
+            initial_errors=dep_errors,
         )
 
     with console.dynamic_progress(len(payloads)) as dynamic_cb:
@@ -141,6 +144,8 @@ async def run_scan(
             dynamic_concurrency=dynamic_concurrency,
             include_evidence=include_evidence,
             on_progress=dynamic_cb,
+            payloads=payloads,
+            initial_errors=payload_errors,
         )
 
     duration = time.monotonic() - start

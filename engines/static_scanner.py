@@ -200,9 +200,15 @@ def _select_vulnerability_id(vuln: dict) -> str:
 async def run_static_scan(
     project_root: Path,
     on_progress: Optional[Callable[[str], None]] = None,
+    *,
+    dependencies: Optional[List[Dependency]] = None,
+    initial_errors: Optional[List[ExecutionError]] = None,
 ) -> Tuple[List[Finding], List[ExecutionError]]:
-    requirement_files = discover_requirement_files(project_root)
-    dependencies, errors = parse_requirement_files(requirement_files)
+    if dependencies is not None:
+        errors = list(initial_errors or [])
+    else:
+        requirement_files = discover_requirement_files(project_root)
+        dependencies, errors = parse_requirement_files(requirement_files)
 
     if not dependencies:
         return [], errors

@@ -417,8 +417,14 @@ async def run_dynamic_scan(
     dynamic_concurrency: int = DYNAMIC_CONCURRENCY,
     include_evidence: bool = False,
     on_progress: Optional[Callable[[str], None]] = None,
+    *,
+    payloads: Optional[List[Payload]] = None,
+    initial_errors: Optional[List[ExecutionError]] = None,
 ) -> Tuple[List[GroupedFinding], List[ExecutionError], List[DynamicEvidence]]:
-    payloads, errors = load_payloads(payload_file)
+    if payloads is not None:
+        errors = list(initial_errors or [])
+    else:
+        payloads, errors = load_payloads(payload_file)
     if errors and not payloads:
         return [], errors, []
 
