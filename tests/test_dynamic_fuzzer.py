@@ -1,3 +1,6 @@
+# Copyright 2026 Oren Ashkenazy
+# SPDX-License-Identifier: Apache-2.0
+
 import json
 from pathlib import Path
 
