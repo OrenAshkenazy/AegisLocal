@@ -17,6 +17,7 @@ from engines.dynamic_fuzzer import (
     load_payloads,
     run_dynamic_scan,
 )
+from engines.model_scanner import scan_model_supply_chain
 from engines.static_scanner import (
     discover_manifest_files,
     parse_manifest_files,
@@ -130,6 +131,11 @@ async def run_scan(
             dependencies=deps,
             initial_errors=dep_errors,
         )
+    model_findings, model_errors = scan_model_supply_chain(
+        project_root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+    )
 
     with console.dynamic_progress(len(payloads)) as dynamic_cb:
         dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
@@ -160,10 +166,10 @@ async def run_scan(
         fallback_judge_endpoint=fallback_judge_endpoint,
         fallback_judge_model=fallback_judge_model,
         include_evidence=include_evidence,
-        static_findings=static_findings,
+        static_findings=[*static_findings, *model_findings],
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
-        execution_errors=[*static_errors, *dynamic_errors],
+        execution_errors=[*static_errors, *model_errors, *dynamic_errors],
         scan_duration_seconds=round(duration, 2),
     )
 

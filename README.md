@@ -256,8 +256,8 @@ local behavior and dependency-risk baseline.
 | --- | --- | --- |
 | **LLM01: Prompt Injection** | Strong | Direct prompt injection, jailbreak/safety bypass, policy evasion, and RAG instruction-override payloads. |
 | **LLM02: Sensitive Information Disclosure** | Medium | PII extraction, PII leakage, sensitive data exfiltration, and private-context disclosure probes. |
-| **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV. |
-| **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, dataset, or model provenance checks yet. |
+| **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV and performs local model provenance checks. |
+| **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, or dataset lineage checks yet. |
 | **LLM05: Improper Output Handling** | Partial | Insecure code generation probes are included, but AegisLocal does not yet test downstream application sinks such as SQL, shell, browser, or HTML rendering contexts. |
 | **LLM06: Excessive Agency** | Partial | Tool-abuse prompts test model intent, but there is no real tool sandbox or agent execution simulation yet. |
 | **LLM07: System Prompt Leakage** | Strong | Dedicated system prompt extraction and hidden-instruction disclosure payloads. |
@@ -267,11 +267,11 @@ local behavior and dependency-risk baseline.
 
 The strongest current coverage areas are prompt injection, jailbreak behavior,
 system prompt leakage, sensitive information disclosure, insecure code
-generation, and basic Python dependency supply-chain risk.
+generation, Python dependency supply-chain risk, and model provenance hygiene.
 
 Planned expansion areas include richer RAG/vector tests, real tool-agent
 execution scenarios, misinformation checks, downstream output-handling tests,
-and explicit resource-exhaustion probes.
+explicit resource-exhaustion probes, and richer AI BOM export.
 
 ## Static Scan Behavior
 
@@ -318,6 +318,54 @@ remediation points the user to advisory-level mitigation or workaround guidance.
 Unsupported requirement or `pyproject.toml` dependency specs are reported as
 execution errors but do not stop the scan. Blank lines, full-line comments, and
 inline comments are ignored safely.
+
+## Model Provenance Scan Behavior
+
+AegisLocal also scans local model supply-chain signals. It discovers model
+references from CLI scan configuration, `.env`, JSON/YAML/TOML/text config
+files, Python source files, `Dockerfile`, and `Modelfile`. It also discovers
+local model artifacts with extensions such as `.gguf`, `.safetensors`, `.bin`,
+`.pt`, `.pth`, and `.ckpt`.
+
+Model supply-chain findings are reported under `static_findings` with category
+`Model Supply Chain`.
+
+The scanner reports risks such as:
+
+- model references that are not declared as approved
+- Hugging Face model references without an immutable commit revision
+- `trust_remote_code = true`
+- local model artifacts without an approved SHA256
+- deserialization-prone model formats such as `.bin`, `.pt`, `.pth`, and `.ckpt`
+- LoRA/adapter artifacts without a declared base model
+- local artifacts whose SHA256 no longer matches the approved manifest entry
+
+Approved model provenance can be declared in `aegislocal.models.toml`:
+
+```toml
+[[models]]
+name = "mistralai/Mistral-7B-Instruct-v0.3"
+source = "huggingface"
+revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+license = "apache-2.0"
+approved = true
+
+[[models]]
+name = "local-model"
+source = "local"
+path = "models/local-model.gguf"
+sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+license = "unknown"
+approved = true
+
+[[adapters]]
+name = "support-lora"
+source = "local"
+base_model = "local-model"
+path = "models/adapters/support-lora.safetensors"
+sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+approved = true
+```
 
 ## Development
 
