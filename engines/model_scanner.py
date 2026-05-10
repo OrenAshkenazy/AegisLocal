@@ -350,7 +350,7 @@ def _hf_references_from_line(path: Path, line_number: int, line: str) -> List[Mo
         references.append(
             ModelReference(
                 name=name,
-                source="huggingface",
+                source=_infer_model_source(name, None),
                 source_file=path,
                 line_number=line_number,
                 revision=match.group("revision"),
