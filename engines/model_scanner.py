@@ -293,36 +293,47 @@ def _iter_text_scan_files(root: Path) -> Iterable[Path]:
 
 
 def _references_from_file(path: Path) -> List[ModelReference]:
+    references: List[ModelReference] = []
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        with path.open(encoding="utf-8") as handle:
+            for line_number, raw_line in enumerate(handle, start=1):
+                references.extend(_references_from_line(path, line_number, raw_line))
     except (OSError, UnicodeDecodeError):
         return []
+    return references
 
+
+def _references_from_line(
+    path: Path,
+    line_number: int,
+    raw_line: str,
+) -> List[ModelReference]:
     references: List[ModelReference] = []
-    for line_number, raw_line in enumerate(lines, start=1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if TRUST_REMOTE_CODE_RE.search(line):
-            references.append(
-                ModelReference(
-                    name="trust_remote_code",
-                    source="runtime",
-                    source_file=path,
-                    line_number=line_number,
-                    artifact_type="remote_code",
-                )
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        return references
+    if TRUST_REMOTE_CODE_RE.search(line):
+        references.append(
+            ModelReference(
+                name="trust_remote_code",
+                source="runtime",
+                source_file=path,
+                line_number=line_number,
+                artifact_type="remote_code",
             )
-        if _line_looks_model_related(line):
-            references.extend(_hf_references_from_line(path, line_number, line))
-            assignment = MODEL_ASSIGNMENT_RE.search(line)
-            if assignment and path.suffix.lower() != ".py":
-                model_name = assignment.group(1).strip()
-                if model_name and "/" not in model_name and model_name != "true":
+        )
+    if _line_looks_model_related(line):
+        references.extend(_hf_references_from_line(path, line_number, line))
+        assignment = MODEL_ASSIGNMENT_RE.search(line)
+        if assignment and _assignment_is_supported(path, assignment):
+            model_name = assignment.group(1).strip()
+            if model_name and model_name != "true":
+                source = _infer_model_source(model_name, None)
+                if source != "huggingface":
                     references.append(
                         ModelReference(
                             name=model_name,
-                            source=_infer_model_source(model_name, None),
+                            source=source,
                             source_file=path,
                             line_number=line_number,
                         )
@@ -515,12 +526,12 @@ def _source_file_text(reference: ModelReference) -> Optional[str]:
 
 def _infer_model_source(model_name: str, endpoint: Optional[str]) -> str:
     normalized_endpoint = (endpoint or "").lower()
+    if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
+        return "local"
     if "/" in model_name:
         return "huggingface"
     if "localhost:11434" in normalized_endpoint or "ollama" in normalized_endpoint:
         return "ollama"
-    if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
-        return "local"
     return "unknown"
 
 
@@ -545,6 +556,8 @@ def _line_looks_model_related(line: str) -> bool:
 def _looks_like_huggingface_reference(line: str, match: re.Match[str]) -> bool:
     if match.group("name") == "owner/model":
         return False
+    if Path(match.group("name")).suffix.lower() in MODEL_FILE_SUFFIXES:
+        return False
     start = match.start("name")
     prefix = line[max(0, start - 10) : start]
     if "://" in prefix:
@@ -555,6 +568,12 @@ def _looks_like_huggingface_reference(line: str, match: re.Match[str]) -> bool:
     if "from_pretrained" not in lowered and "huggingface" not in lowered and not MODEL_ASSIGNMENT_RE.search(line):
         return False
     return " " not in match.group("name")
+
+
+def _assignment_is_supported(path: Path, assignment: re.Match[str]) -> bool:
+    if path.suffix.lower() != ".py":
+        return True
+    return '"' in assignment.group(0) or "'" in assignment.group(0)
 
 
 def _looks_like_adapter_path(path: Path) -> bool:

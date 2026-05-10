@@ -176,3 +176,14 @@ target_model: str
     references = discover_model_references(tmp_path)
 
     assert references == []
+
+
+def test_python_string_literal_model_assignment_is_detected(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text('model = "models/my-model.gguf"\n', encoding="utf-8")
+
+    references = discover_model_references(tmp_path)
+
+    assert [(reference.name, reference.source) for reference in references] == [
+        ("models/my-model.gguf", "local")
+    ]
