@@ -10,6 +10,7 @@ from core.models import Payload, Severity
 import engines.dynamic_fuzzer as dynamic_fuzzer
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
+    JudgeDecision,
     JudgeConfig,
     TARGET_TIMEOUT_SECONDS,
     PayloadEvaluation,
@@ -18,6 +19,7 @@ from engines.dynamic_fuzzer import (
     extract_response_text,
     group_dynamic_findings,
     load_payloads,
+    parse_judge_decision,
     sanitize_evidence_text,
     sanitize_judge_verdict,
 )
@@ -37,6 +39,45 @@ def test_sanitize_judge_verdict_uses_word_boundaries():
     assert sanitize_judge_verdict("The result is: fail.") == "FAIL"
     assert sanitize_judge_verdict("pass and fail") is None
     assert sanitize_judge_verdict("compassionate") is None
+
+
+def test_parse_judge_decision_prefers_json_reason():
+    verdict, reason = parse_judge_decision(
+        '{"verdict": "FAIL", "reason": "The model followed the injected instruction."}'
+    )
+
+    assert verdict == "FAIL"
+    assert reason == "The model followed the injected instruction."
+
+
+def test_parse_judge_decision_accepts_boolean_json_verdicts():
+    pass_verdict, pass_reason = parse_judge_decision(
+        '{"verdict": true, "reason": "The model refused."}'
+    )
+    fail_verdict, fail_reason = parse_judge_decision(
+        '{"verdict": false, "reason": "The model complied."}'
+    )
+
+    assert pass_verdict == "PASS"
+    assert pass_reason == "The model refused."
+    assert fail_verdict == "FAIL"
+    assert fail_reason == "The model complied."
+
+
+def test_parse_judge_decision_falls_back_to_word_boundary_verdict():
+    verdict, reason = parse_judge_decision("The result is PASS.")
+
+    assert verdict == "PASS"
+    assert reason is None
+
+
+def test_parse_judge_decision_does_not_regex_fallback_after_json_parse():
+    verdict, reason = parse_judge_decision(
+        '{"verdict": "UNSURE", "reason": "The response mentions PASS but the verdict is invalid."}'
+    )
+
+    assert verdict is None
+    assert reason == "The response mentions PASS but the verdict is invalid."
 
 
 def test_sanitize_evidence_text_truncates_and_redacts_common_sensitive_values():
@@ -138,7 +179,7 @@ async def test_fallback_judge_recovery_does_not_mark_execution_error(monkeypatch
     async def fake_call_judge(payload, target_response, judge):
         if judge.model == "primary":
             raise RuntimeError("primary unavailable")
-        return "PASS"
+        return JudgeDecision(verdict="PASS", reason="The model refused.")
 
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
 
@@ -151,6 +192,7 @@ async def test_fallback_judge_recovery_does_not_mark_execution_error(monkeypatch
 
     assert decision.verdict == "PASS"
     assert decision.judge_model == "fallback"
+    assert decision.reason == "The model refused."
     assert decision.errors == ()
 
 
@@ -166,7 +208,7 @@ async def test_invalid_primary_and_fallback_verdict_records_unknown(monkeypatch)
     )
 
     async def fake_call_judge(payload, target_response, judge):
-        return None
+        return JudgeDecision(verdict=None)
 
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
 
@@ -200,6 +242,7 @@ def test_build_dynamic_evidence_only_includes_failed_and_unknown_payloads():
                 failed=True,
                 verdict="FAIL",
                 judge_model="judge",
+                judge_reason="The model complied.",
                 target_response="unsafe response",
             ),
             PayloadEvaluation(
@@ -222,6 +265,9 @@ def test_build_dynamic_evidence_only_includes_failed_and_unknown_payloads():
     assert [item.payload_id for item in evidence] == ["pi-001", "pi-003"]
     assert evidence[0].judge_verdict == "FAIL"
     assert evidence[0].judge_model == "judge"
+    assert evidence[0].judge_reason == "The model complied."
+    assert evidence[0].prompt_excerpt == "payload"
+    assert evidence[0].expected_behavior == "refuse"
     assert evidence[0].target_response_excerpt == "unsafe response"
     assert evidence[1].judge_verdict == "UNKNOWN"
     assert build_dynamic_evidence(evidence, include_evidence=False) == []

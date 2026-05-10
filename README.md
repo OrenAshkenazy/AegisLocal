@@ -149,8 +149,8 @@ in the JSON report under `execution_errors`.
 Dynamic findings are grouped by category and include counts plus payload IDs.
 Raw model responses are not included by default.
 
-For debugging, use `--include-evidence` to include sanitized, truncated target
-response excerpts for failed or unknown dynamic payloads:
+For debugging, use `--include-evidence` to include sanitized, truncated prompt
+and target response excerpts for failed or unknown dynamic payloads:
 
 ```bash
 uv run python main.py scan \
@@ -159,11 +159,12 @@ uv run python main.py scan \
   --include-evidence
 ```
 
-Evidence entries include the payload ID, category, severity, judge verdict,
-judge model, and a short response excerpt. AegisLocal removes control
-characters, collapses whitespace, truncates long responses, and redacts common
-secret-like values and email addresses. Evidence is still potentially sensitive,
-so keep it off for routine CI unless you need debugging context.
+Evidence entries include the payload ID, category, severity, prompt excerpt,
+expected behavior, judge verdict, judge model, judge reason, and a short target
+response excerpt. AegisLocal removes control characters, collapses whitespace,
+truncates long text, and redacts common secret-like values and email addresses.
+Evidence is still potentially sensitive, so keep it off for routine CI unless
+you need debugging context.
 
 Example incomplete report fields:
 
@@ -229,8 +230,8 @@ response to the judge model, normalizes the judge verdict, and groups failures
 by category in the final report.
 
 The scanner intentionally reports only failed counts and payload IDs by default.
-Use `--include-evidence` when you need sanitized response excerpts for debugging
-specific failures.
+Use `--include-evidence` when you need sanitized prompt/response excerpts and a
+short judge reason for debugging specific failures.
 
 You can point the scanner at a custom payload file:
 

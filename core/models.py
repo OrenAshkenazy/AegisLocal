@@ -56,8 +56,12 @@ class DynamicEvidence(BaseModel):
     payload_id: str
     category: str
     severity: Severity
+    prompt_excerpt: Optional[str] = None
+    prompt_truncated: bool = False
+    expected_behavior: Optional[str] = None
     judge_verdict: str
     judge_model: Optional[str] = None
+    judge_reason: Optional[str] = None
     target_response_excerpt: Optional[str] = None
     response_truncated: bool = False
 
