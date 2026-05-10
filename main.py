@@ -17,6 +17,7 @@ from engines.dynamic_fuzzer import (
     load_payloads,
     run_dynamic_scan,
 )
+from engines.bom import build_cyclonedx_bom, write_cyclonedx_bom
 from engines.model_scanner import scan_model_supply_chain
 from engines.static_scanner import (
     discover_manifest_files,
@@ -116,6 +117,7 @@ async def run_scan(
     fallback_judge_model: Optional[str],
     include_evidence: bool,
     console: ScanConsole,
+    bom_output_file: Optional[Path] = None,
 ) -> ScanReport:
     start = time.monotonic()
 
@@ -155,6 +157,17 @@ async def run_scan(
         )
 
     duration = time.monotonic() - start
+    scanner_version = _get_version()
+
+    if bom_output_file is not None:
+        bom = build_cyclonedx_bom(
+            project_root,
+            deps,
+            target_model=target_model,
+            target_endpoint=target_endpoint,
+            scanner_version=scanner_version,
+        )
+        write_cyclonedx_bom(bom_output_file, bom)
 
     return build_report(
         target_endpoint=target_endpoint,
@@ -252,6 +265,12 @@ def scan(
         "-o",
         help="Write JSON report to file (in addition to stdout).",
     ),
+    bom_output_file: Optional[Path] = typer.Option(
+        None,
+        "--bom-output",
+        "--bom-output-file",
+        help="Write a CycloneDX JSON SBOM/AIBOM inventory to this file.",
+    ),
 ) -> None:
     if quiet and verbose:
         typer.echo("Error: --quiet and --verbose are mutually exclusive.", err=True)
@@ -273,6 +292,7 @@ def scan(
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
             console=console,
+            bom_output_file=bom_output_file,
         )
     )
 

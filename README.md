@@ -271,7 +271,7 @@ generation, Python dependency supply-chain risk, and model provenance hygiene.
 
 Planned expansion areas include richer RAG/vector tests, real tool-agent
 execution scenarios, misinformation checks, downstream output-handling tests,
-explicit resource-exhaustion probes, and richer AI BOM export.
+and explicit resource-exhaustion probes.
 
 ## Static Scan Behavior
 
@@ -366,6 +366,24 @@ path = "models/adapters/support-lora.safetensors"
 sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 approved = true
 ```
+
+## SBOM/AIBOM Output
+
+AegisLocal can write a CycloneDX JSON inventory that combines Python package
+components with local AI/model components:
+
+```bash
+uv run python main.py scan --bom-output bom.cdx.json
+```
+
+The BOM includes:
+
+- PyPI dependency components discovered by the static scanner
+- model references discovered from CLI/config/code
+- local model and adapter artifacts with SHA256 hashes
+- approved model/adaptor metadata from `aegislocal.models.toml`
+- AegisLocal properties for source file, artifact type, model source, approval
+  status, format, and base model where available
 
 ## Development
 
