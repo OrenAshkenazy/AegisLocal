@@ -18,7 +18,7 @@ from engines.dynamic_fuzzer import (
     run_dynamic_scan,
 )
 from engines.bom import build_cyclonedx_bom, write_cyclonedx_bom
-from engines.model_scanner import scan_model_supply_chain
+from engines.model_scanner import collect_model_inventory, scan_model_supply_chain
 from engines.static_scanner import (
     discover_manifest_files,
     parse_manifest_files,
@@ -133,10 +133,15 @@ async def run_scan(
             dependencies=deps,
             initial_errors=dep_errors,
         )
-    model_findings, model_errors = scan_model_supply_chain(
+    model_inventory = collect_model_inventory(
         project_root,
         target_model=target_model,
         target_endpoint=target_endpoint,
+        include_hashes=bom_output_file is not None,
+    )
+    model_findings, model_errors = scan_model_supply_chain(
+        project_root,
+        inventory=model_inventory,
     )
 
     with console.dynamic_progress(len(payloads)) as dynamic_cb:
@@ -166,6 +171,7 @@ async def run_scan(
             target_model=target_model,
             target_endpoint=target_endpoint,
             scanner_version=scanner_version,
+            model_inventory=model_inventory,
         )
         write_cyclonedx_bom(bom_output_file, bom)
 

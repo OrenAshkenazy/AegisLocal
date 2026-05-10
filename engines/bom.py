@@ -2,19 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, List, Optional
 from urllib.parse import quote
 
 from engines.model_scanner import (
+    MODEL_MANIFEST_NAME,
     ModelArtifact,
+    ModelInventory,
     ModelManifest,
     ModelManifestEntry,
     ModelReference,
-    discover_model_artifacts,
-    discover_model_references,
-    load_model_manifest,
+    collect_model_inventory,
+    _normalize_configured_path,
+    _normalize_manifest_path,
+    _sha256_file,
 )
 from engines.static_scanner import Dependency
 
@@ -29,29 +33,32 @@ def build_cyclonedx_bom(
     target_model: Optional[str],
     target_endpoint: Optional[str],
     scanner_version: str,
+    model_inventory: Optional[ModelInventory] = None,
 ) -> dict:
     root = project_root.resolve()
-    manifest, _errors = load_model_manifest(root)
-    model_references = discover_model_references(
+    model_inventory = model_inventory or collect_model_inventory(
         root,
         target_model=target_model,
         target_endpoint=target_endpoint,
+        include_hashes=True,
     )
-    model_artifacts = discover_model_artifacts(root)
     components = _dedupe_components(
         [
             *(_dependency_component(dependency) for dependency in dependencies),
             *(
-                _model_reference_component(reference, manifest)
-                for reference in model_references
+                _model_reference_component(reference, model_inventory.manifest)
+                for reference in model_inventory.references
             ),
             *(
-                _model_artifact_component(artifact, manifest, root)
-                for artifact in model_artifacts
+                _model_artifact_component(artifact, model_inventory.manifest, root)
+                for artifact in model_inventory.artifacts
             ),
             *(
-                _manifest_entry_component(entry, root, "aegislocal.models.toml")
-                for entry in (*manifest.models, *manifest.adapters)
+                _manifest_entry_component(entry, root, MODEL_MANIFEST_NAME)
+                for entry in (
+                    *model_inventory.manifest.models,
+                    *model_inventory.manifest.adapters,
+                )
             ),
         ]
     )
@@ -157,8 +164,8 @@ def _model_artifact_component(
     root: Path,
 ) -> dict:
     manifest_entry = manifest.artifact_entry(artifact.path, root)
-    relative_path = _relative_path(artifact.path, root)
-    digest = _sha256_file(artifact.path)
+    relative_path = _normalize_manifest_path(artifact.path, root)
+    digest = artifact.sha256 or _sha256_file(artifact.path)
     properties = [
         _property("aegislocal:artifact-type", artifact.artifact_type),
         _property("aegislocal:model-source", "local"),
@@ -254,42 +261,14 @@ def _normalize_pypi_name(name: str) -> str:
     return name.replace("_", "-").lower()
 
 
-def _normalize_configured_path(path: Optional[str]) -> str:
-    if not path:
-        return ""
-    return Path(path).as_posix().lstrip("./")
-
-
-def _relative_path(path: Path, root: Path) -> str:
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def _sha256_file(path: Path) -> str:
-    import hashlib
-
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _safe_ref(value: str) -> str:
     return quote(value.replace(" ", "-"))
 
 
 def _stable_bom_uuid(root: Path, component_refs: Iterable[str]) -> str:
-    import hashlib
-    import uuid
-
-    digest = hashlib.sha256()
-    digest.update(str(root).encode("utf-8"))
-    for ref in sorted(component_refs):
-        digest.update(ref.encode("utf-8"))
-    return str(uuid.UUID(digest.hexdigest()[:32]))
+    aegis_namespace = uuid.UUID("7896898a-2bab-4696-8022-790809696801")
+    content = f"{root.name}:" + ",".join(sorted(component_refs))
+    return str(uuid.uuid5(aegis_namespace, content))
 
 
 __all__ = ["CYCLONEDX_SPEC_VERSION", "build_cyclonedx_bom", "write_cyclonedx_bom"]

@@ -77,6 +77,7 @@ class ModelArtifact:
     path: Path
     artifact_type: str
     format: str
+    sha256: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,14 @@ class ModelManifest:
             if entry.path and _normalize_configured_path(entry.path) == normalized_path:
                 return entry
         return None
+
+
+@dataclass(frozen=True)
+class ModelInventory:
+    manifest: ModelManifest
+    manifest_errors: Tuple[ExecutionError, ...]
+    references: Tuple[ModelReference, ...]
+    artifacts: Tuple[ModelArtifact, ...]
 
 
 def _warn(error: ExecutionError) -> None:
@@ -211,7 +220,11 @@ def discover_model_references(
     return _dedupe_model_references(references)
 
 
-def discover_model_artifacts(project_root: Path) -> List[ModelArtifact]:
+def discover_model_artifacts(
+    project_root: Path,
+    *,
+    include_hashes: bool = False,
+) -> List[ModelArtifact]:
     root = project_root.resolve()
     artifacts: List[ModelArtifact] = []
     if not root.exists():
@@ -238,17 +251,19 @@ def discover_model_artifacts(project_root: Path) -> List[ModelArtifact]:
                     path=path,
                     artifact_type=artifact_type,
                     format=suffix.lstrip("."),
+                    sha256=_sha256_file(path) if include_hashes else None,
                 )
             )
     return sorted(artifacts, key=lambda artifact: str(artifact.path))
 
 
-def scan_model_supply_chain(
+def collect_model_inventory(
     project_root: Path,
     *,
     target_model: Optional[str] = None,
     target_endpoint: Optional[str] = None,
-) -> Tuple[List[Finding], List[ExecutionError]]:
+    include_hashes: bool = False,
+) -> ModelInventory:
     root = project_root.resolve()
     manifest, errors = load_model_manifest(root)
     references = discover_model_references(
@@ -256,17 +271,44 @@ def scan_model_supply_chain(
         target_model=target_model,
         target_endpoint=target_endpoint,
     )
-    artifacts = discover_model_artifacts(root)
+    artifacts = discover_model_artifacts(root, include_hashes=include_hashes)
+    return ModelInventory(
+        manifest=manifest,
+        manifest_errors=tuple(errors),
+        references=tuple(references),
+        artifacts=tuple(artifacts),
+    )
+
+
+def scan_model_supply_chain(
+    project_root: Path,
+    *,
+    target_model: Optional[str] = None,
+    target_endpoint: Optional[str] = None,
+    inventory: Optional[ModelInventory] = None,
+) -> Tuple[List[Finding], List[ExecutionError]]:
+    root = project_root.resolve()
+    inventory = inventory or collect_model_inventory(
+        root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        include_hashes=True,
+    )
 
     findings: List[Finding] = []
-    for reference in references:
-        findings.extend(_findings_for_reference(reference, manifest))
+    for reference in inventory.references:
+        findings.extend(_findings_for_reference(reference, inventory.manifest))
 
-    for artifact in artifacts:
-        findings.extend(_findings_for_artifact(artifact, manifest, root))
+    artifact_hashes = {
+        _normalize_manifest_path(artifact.path, root): artifact.sha256
+        for artifact in inventory.artifacts
+        if artifact.sha256
+    }
+    for artifact in inventory.artifacts:
+        findings.extend(_findings_for_artifact(artifact, inventory.manifest, root))
 
-    findings.extend(_findings_for_manifest(manifest, root))
-    return _dedupe_findings(findings), errors
+    findings.extend(_findings_for_manifest(inventory.manifest, root, artifact_hashes))
+    return _dedupe_findings(findings), list(inventory.manifest_errors)
 
 
 def _iter_text_scan_files(root: Path) -> Iterable[Path]:
@@ -438,7 +480,7 @@ def _findings_for_artifact(
         )
 
     if manifest_entry is None or not manifest_entry.sha256:
-        actual_hash = _sha256_file(artifact.path)
+        actual_hash = artifact.sha256 or _sha256_file(artifact.path)
         findings.append(
             Finding(
                 severity=Severity.MEDIUM,
@@ -483,13 +525,20 @@ def _findings_for_artifact(
     return findings
 
 
-def _findings_for_manifest(manifest: ModelManifest, root: Path) -> List[Finding]:
+def _findings_for_manifest(
+    manifest: ModelManifest,
+    root: Path,
+    artifact_hashes: dict[str, str],
+) -> List[Finding]:
     findings: List[Finding] = []
     for entry in (*manifest.models, *manifest.adapters):
         if entry.path:
             path = root / entry.path
             if path.exists() and entry.sha256:
-                actual_hash = _sha256_file(path)
+                actual_hash = artifact_hashes.get(
+                    _normalize_manifest_path(path, root),
+                    _sha256_file(path),
+                )
                 expected_hash = _normalize_sha256(entry.sha256)
                 if expected_hash and actual_hash.lower() != expected_hash.lower():
                     findings.append(
@@ -660,8 +709,10 @@ __all__ = [
     "MODEL_MANIFEST_NAME",
     "MODEL_SUPPLY_CHAIN_CATEGORY",
     "ModelArtifact",
+    "ModelInventory",
     "ModelManifest",
     "ModelReference",
+    "collect_model_inventory",
     "discover_model_artifacts",
     "discover_model_references",
     "load_model_manifest",
