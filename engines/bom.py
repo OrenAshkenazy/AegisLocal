@@ -46,10 +46,6 @@ def build_cyclonedx_bom(
         [
             *(_dependency_component(dependency) for dependency in dependencies),
             *(
-                _model_reference_component(reference, model_inventory.manifest)
-                for reference in model_inventory.references
-            ),
-            *(
                 _model_artifact_component(artifact, model_inventory.manifest, root)
                 for artifact in model_inventory.artifacts
             ),
@@ -59,6 +55,10 @@ def build_cyclonedx_bom(
                     *model_inventory.manifest.models,
                     *model_inventory.manifest.adapters,
                 )
+            ),
+            *(
+                _model_reference_component(reference, model_inventory.manifest)
+                for reference in model_inventory.references
             ),
         ]
     )
@@ -181,7 +181,8 @@ def _model_artifact_component(
     return {
         "type": "machine-learning-model",
         "bom-ref": f"model:local/{quote(relative_path)}",
-        "name": artifact.name,
+        "name": manifest_entry.name if manifest_entry else artifact.name,
+        "version": digest,
         "hashes": [{"alg": "SHA-256", "content": digest}],
         "properties": properties,
     }

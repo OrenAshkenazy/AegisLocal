@@ -535,10 +535,8 @@ def _findings_for_manifest(
         if entry.path:
             path = root / entry.path
             if path.exists() and entry.sha256:
-                actual_hash = artifact_hashes.get(
-                    _normalize_manifest_path(path, root),
-                    _sha256_file(path),
-                )
+                rel_path = _normalize_manifest_path(path, root)
+                actual_hash = artifact_hashes.get(rel_path) or _sha256_file(path)
                 expected_hash = _normalize_sha256(entry.sha256)
                 if expected_hash and actual_hash.lower() != expected_hash.lower():
                     findings.append(

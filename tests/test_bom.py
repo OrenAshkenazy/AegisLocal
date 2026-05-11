@@ -108,6 +108,8 @@ approved = true
     component = _component_by_ref(bom, "model:local/models/local.gguf")
 
     assert component["type"] == "machine-learning-model"
+    assert component["name"] == "local-model"
+    assert component["version"] == component["hashes"][0]["content"]
     assert component["hashes"][0]["alg"] == "SHA-256"
     assert _property(component, "aegislocal:format") == "gguf"
     assert _property(component, "aegislocal:approved") == "true"
