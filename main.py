@@ -17,7 +17,13 @@ from engines.dynamic_fuzzer import (
     load_payloads,
     run_dynamic_scan,
 )
-from engines.bom import build_cyclonedx_bom, collect_bom_dependencies, write_cyclonedx_bom
+from engines.bom import (
+    build_cyclonedx_aibom,
+    build_cyclonedx_sbom,
+    collect_bom_dependencies,
+    split_bom_output_paths,
+    write_cyclonedx_bom,
+)
 from engines.model_scanner import collect_model_inventory, scan_model_supply_chain
 from engines.static_scanner import (
     discover_manifest_files,
@@ -304,7 +310,7 @@ def bom_command(
         ...,
         "--output",
         "-o",
-        help="Write CycloneDX JSON SBOM/AIBOM inventory to this file.",
+        help="Output path prefix. Writes separate .sbom and .aibom CycloneDX JSON files.",
     ),
     target_model: Optional[str] = typer.Option(
         None,
@@ -330,25 +336,35 @@ def bom_command(
         target_endpoint=target_endpoint,
         include_hashes=True,
     )
-    bom = build_cyclonedx_bom(
+    scanner_version = _get_version()
+    sbom = build_cyclonedx_sbom(
         project_root,
         deps,
+        scanner_version=scanner_version,
+    )
+    aibom = build_cyclonedx_aibom(
+        project_root,
         target_model=target_model,
         target_endpoint=target_endpoint,
-        scanner_version=_get_version(),
+        scanner_version=scanner_version,
         model_inventory=model_inventory,
     )
-    write_cyclonedx_bom(output_file, bom)
+    sbom_output_file, aibom_output_file = split_bom_output_paths(output_file)
+    write_cyclonedx_bom(sbom_output_file, sbom)
+    write_cyclonedx_bom(aibom_output_file, aibom)
 
     execution_errors = [*dep_errors, *model_inventory.manifest_errors]
     if execution_errors:
         typer.echo(
-            f"Wrote BOM with {len(execution_errors)} inventory warning(s): {output_file}",
+            "Wrote BOMs with "
+            f"{len(execution_errors)} inventory warning(s): "
+            f"{sbom_output_file}, {aibom_output_file}",
             err=True,
         )
         raise typer.Exit(code=1 if strict else 0)
 
-    typer.echo(f"Wrote BOM: {output_file}")
+    typer.echo(f"Wrote SBOM: {sbom_output_file}")
+    typer.echo(f"Wrote AIBOM: {aibom_output_file}")
 
 
 if __name__ == "__main__":

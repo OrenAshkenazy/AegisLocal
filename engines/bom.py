@@ -57,33 +57,68 @@ def build_cyclonedx_bom(
         target_endpoint=target_endpoint,
         include_hashes=True,
     )
-    components = _dedupe_components(
-        [
-            *(_dependency_component(dependency) for dependency in dependencies),
-            *(
-                _model_artifact_component(artifact, model_inventory.manifest, root)
-                for artifact in model_inventory.artifacts
-            ),
-            *(
-                _manifest_entry_component(entry, root, MODEL_MANIFEST_NAME)
-                for entry in (
-                    *model_inventory.manifest.models,
-                    *model_inventory.manifest.adapters,
-                )
-            ),
-            *(
-                _model_reference_component(reference, model_inventory.manifest)
-                for reference in model_inventory.references
-            ),
-        ]
+    return _build_cyclonedx_document(
+        root,
+        scanner_version=scanner_version,
+        bom_kind="sbom+aibom",
+        components=[
+            *_dependency_components(dependencies),
+            *_aibom_components(root, model_inventory),
+        ],
     )
 
+
+def build_cyclonedx_sbom(
+    project_root: Path,
+    dependencies: Iterable[Dependency],
+    *,
+    scanner_version: str,
+) -> dict:
+    return _build_cyclonedx_document(
+        project_root.resolve(),
+        scanner_version=scanner_version,
+        bom_kind="sbom",
+        components=_dependency_components(dependencies),
+    )
+
+
+def build_cyclonedx_aibom(
+    project_root: Path,
+    *,
+    target_model: Optional[str],
+    target_endpoint: Optional[str],
+    scanner_version: str,
+    model_inventory: Optional[ModelInventory] = None,
+) -> dict:
+    root = project_root.resolve()
+    model_inventory = model_inventory or collect_model_inventory(
+        root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        include_hashes=True,
+    )
+    return _build_cyclonedx_document(
+        root,
+        scanner_version=scanner_version,
+        bom_kind="aibom",
+        components=_aibom_components(root, model_inventory),
+    )
+
+
+def _build_cyclonedx_document(
+    root: Path,
+    *,
+    scanner_version: str,
+    bom_kind: str,
+    components: Iterable[dict],
+) -> dict:
+    components = _dedupe_components(components)
     root_ref = f"pkg:generic/{_safe_ref(root.name or 'project')}"
     component_refs = [component["bom-ref"] for component in components]
     return {
         "bomFormat": "CycloneDX",
         "specVersion": CYCLONEDX_SPEC_VERSION,
-        "serialNumber": f"urn:uuid:{_stable_bom_uuid(root, component_refs)}",
+        "serialNumber": f"urn:uuid:{_stable_bom_uuid(root, bom_kind, component_refs)}",
         "version": 1,
         "metadata": {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -101,7 +136,7 @@ def build_cyclonedx_bom(
                 "version": "unresolved",
                 "properties": [
                     _property("aegislocal:project-root", str(root)),
-                    _property("aegislocal:bom-kind", "sbom+aibom"),
+                    _property("aegislocal:bom-kind", bom_kind),
                 ],
             },
         },
@@ -115,8 +150,47 @@ def build_cyclonedx_bom(
     }
 
 
+def _dependency_components(dependencies: Iterable[Dependency]) -> List[dict]:
+    return [_dependency_component(dependency) for dependency in dependencies]
+
+
+def _aibom_components(root: Path, model_inventory: ModelInventory) -> List[dict]:
+    return [
+        *(
+            _model_artifact_component(artifact, model_inventory.manifest, root)
+            for artifact in model_inventory.artifacts
+        ),
+        *(
+            _manifest_entry_component(entry, root, MODEL_MANIFEST_NAME)
+            for entry in (
+                *model_inventory.manifest.models,
+                *model_inventory.manifest.adapters,
+            )
+        ),
+        *(
+            _model_reference_component(reference, model_inventory.manifest)
+            for reference in model_inventory.references
+        ),
+    ]
+
+
 def write_cyclonedx_bom(path: Path, bom: dict) -> None:
     path.write_text(json.dumps(bom, indent=2) + "\n", encoding="utf-8")
+
+
+def split_bom_output_paths(output_file: Path) -> Tuple[Path, Path]:
+    output_text = str(output_file)
+    if output_text.endswith(".cdx.json"):
+        base = output_text[: -len(".cdx.json")]
+        return Path(f"{base}.sbom.cdx.json"), Path(f"{base}.aibom.cdx.json")
+    suffix = "".join(output_file.suffixes)
+    if suffix:
+        base = str(output_file)[: -len(suffix)]
+        return Path(f"{base}.sbom{suffix}"), Path(f"{base}.aibom{suffix}")
+    return (
+        output_file.with_name(f"{output_file.name}.sbom"),
+        output_file.with_name(f"{output_file.name}.aibom"),
+    )
 
 
 def collect_bom_dependencies(
@@ -498,16 +572,19 @@ def _safe_ref(value: str) -> str:
     return quote(value.replace(" ", "-"))
 
 
-def _stable_bom_uuid(root: Path, component_refs: Iterable[str]) -> str:
+def _stable_bom_uuid(root: Path, bom_kind: str, component_refs: Iterable[str]) -> str:
     aegis_namespace = uuid.UUID("7896898a-2bab-4696-8022-790809696801")
-    content = f"{root.name}:" + ",".join(sorted(component_refs))
+    content = f"{root.name}:{bom_kind}:" + ",".join(sorted(component_refs))
     return str(uuid.uuid5(aegis_namespace, content))
 
 
 __all__ = [
     "CYCLONEDX_SPEC_VERSION",
     "UNRESOLVED_VERSION",
+    "build_cyclonedx_aibom",
     "build_cyclonedx_bom",
+    "build_cyclonedx_sbom",
     "collect_bom_dependencies",
+    "split_bom_output_paths",
     "write_cyclonedx_bom",
 ]

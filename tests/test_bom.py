@@ -8,8 +8,11 @@ from typer.testing import CliRunner
 from engines.bom import (
     CYCLONEDX_SPEC_VERSION,
     UNRESOLVED_VERSION,
+    build_cyclonedx_aibom,
     build_cyclonedx_bom,
+    build_cyclonedx_sbom,
     collect_bom_dependencies,
+    split_bom_output_paths,
     write_cyclonedx_bom,
 )
 from engines.static_scanner import Dependency
@@ -45,6 +48,36 @@ def test_build_cyclonedx_bom_includes_python_dependencies(tmp_path):
     assert component["purl"] == "pkg:pypi/requests@2.32.4"
     assert _property(component, "aegislocal:ecosystem") == "PyPI"
     assert _property(component, "aegislocal:source-line") == "3"
+
+
+def test_build_separate_sbom_and_aibom_documents(tmp_path):
+    dependency = Dependency(
+        name="fastapi",
+        version=UNRESOLVED_VERSION,
+        source_file=tmp_path / "requirements.txt",
+        line_number=1,
+    )
+    config = tmp_path / "settings.toml"
+    config.write_text('model = "mistralai/Mistral-7B-Instruct-v0.3"\n', encoding="utf-8")
+
+    sbom = build_cyclonedx_sbom(
+        tmp_path,
+        [dependency],
+        scanner_version="0.1.0",
+    )
+    aibom = build_cyclonedx_aibom(
+        tmp_path,
+        target_model=None,
+        target_endpoint=None,
+        scanner_version="0.1.0",
+    )
+
+    assert _metadata_property(sbom, "aegislocal:bom-kind") == "sbom"
+    assert _metadata_property(aibom, "aegislocal:bom-kind") == "aibom"
+    assert "pkg:pypi/fastapi" in {component["bom-ref"] for component in sbom["components"]}
+    assert all(component["type"] != "machine-learning-model" for component in sbom["components"])
+    assert all(not component["bom-ref"].startswith("pkg:pypi/") for component in aibom["components"])
+    assert any(component["type"] == "machine-learning-model" for component in aibom["components"])
 
 
 def test_build_cyclonedx_bom_includes_huggingface_model_references(tmp_path):
@@ -136,7 +169,14 @@ def test_write_cyclonedx_bom_writes_pretty_json(tmp_path):
     assert output.read_text(encoding="utf-8").endswith("\n")
 
 
-def test_bom_command_writes_inventory_without_default_runtime_model(tmp_path):
+def test_split_bom_output_paths_prefers_cyclonedx_suffixes(tmp_path):
+    sbom_path, aibom_path = split_bom_output_paths(tmp_path / "bom.cdx.json")
+
+    assert sbom_path == tmp_path / "bom.sbom.cdx.json"
+    assert aibom_path == tmp_path / "bom.aibom.cdx.json"
+
+
+def test_bom_command_writes_separate_reports_without_default_runtime_model(tmp_path):
     requirements = tmp_path / "requirements.txt"
     requirements.write_text("requests==2.32.4\n", encoding="utf-8")
     output = tmp_path / "bom.cdx.json"
@@ -152,12 +192,15 @@ def test_bom_command_writes_inventory_without_default_runtime_model(tmp_path):
         ],
     )
 
-    bom = json.loads(output.read_text(encoding="utf-8"))
-    bom_refs = {component["bom-ref"] for component in bom["components"]}
+    sbom = json.loads((tmp_path / "bom.sbom.cdx.json").read_text(encoding="utf-8"))
+    aibom = json.loads((tmp_path / "bom.aibom.cdx.json").read_text(encoding="utf-8"))
+    sbom_refs = {component["bom-ref"] for component in sbom["components"]}
+    aibom_refs = {component["bom-ref"] for component in aibom["components"]}
 
     assert result.exit_code == 0
-    assert "pkg:pypi/requests@2.32.4" in bom_refs
-    assert "model:ollama/llama3.1%3A8b" not in bom_refs
+    assert "pkg:pypi/requests@2.32.4" in sbom_refs
+    assert "pkg:pypi/requests@2.32.4" not in aibom_refs
+    assert "model:ollama/llama3.1%3A8b" not in aibom_refs
 
 
 def test_collect_bom_dependencies_includes_unpinned_requirements(tmp_path):
@@ -201,9 +244,9 @@ def test_bom_command_outputs_unpinned_requirement_components(tmp_path):
         ],
     )
 
-    bom = json.loads(output.read_text(encoding="utf-8"))
-    fastapi = _component_by_ref(bom, "pkg:pypi/fastapi")
-    python_jose = _component_by_ref(bom, "pkg:pypi/python-jose")
+    sbom = json.loads((tmp_path / "bom.sbom.cdx.json").read_text(encoding="utf-8"))
+    fastapi = _component_by_ref(sbom, "pkg:pypi/fastapi")
+    python_jose = _component_by_ref(sbom, "pkg:pypi/python-jose")
 
     assert result.exit_code == 0
     assert fastapi["version"] == UNRESOLVED_VERSION
@@ -228,11 +271,11 @@ def test_bom_command_includes_explicit_runtime_model(tmp_path):
         ],
     )
 
-    bom = json.loads(output.read_text(encoding="utf-8"))
-    bom_refs = {component["bom-ref"] for component in bom["components"]}
+    aibom = json.loads((tmp_path / "bom.aibom.cdx.json").read_text(encoding="utf-8"))
+    aibom_refs = {component["bom-ref"] for component in aibom["components"]}
 
     assert result.exit_code == 0
-    assert "model:ollama/llama3.1%3A8b" in bom_refs
+    assert "model:ollama/llama3.1%3A8b" in aibom_refs
 
 
 def test_bom_command_inventory_warnings_are_nonfatal_by_default(tmp_path):
@@ -252,8 +295,9 @@ def test_bom_command_inventory_warnings_are_nonfatal_by_default(tmp_path):
     )
 
     assert result.exit_code == 0
-    assert output.exists()
-    assert "Wrote BOM with 1 inventory warning(s)" in result.output
+    assert (tmp_path / "bom.sbom.cdx.json").exists()
+    assert (tmp_path / "bom.aibom.cdx.json").exists()
+    assert "Wrote BOMs with 1 inventory warning(s)" in result.output
 
 
 def test_bom_command_strict_inventory_warnings_are_fatal(tmp_path):
@@ -274,8 +318,9 @@ def test_bom_command_strict_inventory_warnings_are_fatal(tmp_path):
     )
 
     assert result.exit_code == 1
-    assert output.exists()
-    assert "Wrote BOM with 1 inventory warning(s)" in result.output
+    assert (tmp_path / "bom.sbom.cdx.json").exists()
+    assert (tmp_path / "bom.aibom.cdx.json").exists()
+    assert "Wrote BOMs with 1 inventory warning(s)" in result.output
 
 
 def _component_by_ref(bom, bom_ref):
@@ -290,3 +335,7 @@ def _property(component, name):
         if prop["name"] == name:
             return prop["value"]
     raise AssertionError(f"Missing property {name}")
+
+
+def _metadata_property(bom, name):
+    return _property(bom["metadata"]["component"], name)

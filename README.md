@@ -369,16 +369,24 @@ approved = true
 
 ## SBOM/AIBOM Output
 
-AegisLocal can write a CycloneDX JSON inventory that combines Python package
-components with local AI/model components:
+AegisLocal can write separate CycloneDX JSON inventories for software packages
+and AI/model assets:
 
 ```bash
 uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json
 ```
 
-The BOM includes:
+This writes:
+
+- `bom.sbom.cdx.json` for Python package inventory
+- `bom.aibom.cdx.json` for model, adapter, and provenance inventory
+
+The SBOM includes:
 
 - PyPI dependency components discovered by the static scanner
+
+The AIBOM includes:
+
 - model references discovered from CLI/config/code
 - local model and adapter artifacts with SHA256 hashes
 - approved model/adaptor metadata from `aegislocal.models.toml`
