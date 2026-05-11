@@ -83,6 +83,7 @@ def build_cyclonedx_bom(
                 "type": "application",
                 "bom-ref": root_ref,
                 "name": root.name or "project",
+                "version": "unresolved",
                 "properties": [
                     _property("aegislocal:project-root", str(root)),
                     _property("aegislocal:bom-kind", "sbom+aibom"),
@@ -140,6 +141,8 @@ def _model_reference_component(
         properties.append(_property("aegislocal:revision", reference.revision))
     if approved_entry and approved_entry.license:
         properties.append(_property("aegislocal:license", approved_entry.license))
+    if approved_entry and approved_entry.base_model:
+        properties.append(_property("aegislocal:base-model", approved_entry.base_model))
 
     component = {
         "type": "machine-learning-model",

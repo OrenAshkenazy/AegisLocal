@@ -33,6 +33,7 @@ def test_build_cyclonedx_bom_includes_python_dependencies(tmp_path):
 
     assert bom["bomFormat"] == "CycloneDX"
     assert bom["specVersion"] == CYCLONEDX_SPEC_VERSION
+    assert bom["metadata"]["component"]["version"] == "unresolved"
     assert component["type"] == "library"
     assert component["name"] == "Requests"
     assert component["purl"] == "pkg:pypi/requests@2.32.4"

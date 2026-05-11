@@ -136,6 +136,7 @@ async def run_scan(
         project_root,
         target_model=target_model,
         target_endpoint=target_endpoint,
+        include_hashes=True,
     )
     model_findings, model_errors = scan_model_supply_chain(
         project_root,
