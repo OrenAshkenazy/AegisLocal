@@ -26,6 +26,7 @@ EXCLUDED_DIR_NAMES = {
     ".pytest_cache",
     ".ruff_cache",
     ".venv",
+    ".worktrees",
     "__pycache__",
     "build",
     "dist",
@@ -55,7 +56,7 @@ HF_MODEL_RE = re.compile(
     r"(?:@(?P<revision>[A-Za-z0-9_.-]{7,40}))?"
 )
 MODEL_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(?:target_)?(?:base_)?model(?:_id|_name)?\b\s*[:=]\s*[\"']?([^\"'\s,#]+)"
+    r"(?i)\b(?:[a-z0-9]+_)*(?:target_)?(?:base_)?model(?:_id|_name)?\b\s*[:=]\s*[\"']?([^\"'\s,#]+)"
 )
 TRUST_REMOTE_CODE_RE = re.compile(r"(?i)\btrust_remote_code\b\s*[:=]\s*true\b")
 FULL_SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
@@ -77,6 +78,7 @@ class ModelArtifact:
     path: Path
     artifact_type: str
     format: str
+    sha256: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,14 @@ class ModelManifest:
             if entry.path and _normalize_configured_path(entry.path) == normalized_path:
                 return entry
         return None
+
+
+@dataclass(frozen=True)
+class ModelInventory:
+    manifest: ModelManifest
+    manifest_errors: Tuple[ExecutionError, ...]
+    references: Tuple[ModelReference, ...]
+    artifacts: Tuple[ModelArtifact, ...]
 
 
 def _warn(error: ExecutionError) -> None:
@@ -211,7 +221,11 @@ def discover_model_references(
     return _dedupe_model_references(references)
 
 
-def discover_model_artifacts(project_root: Path) -> List[ModelArtifact]:
+def discover_model_artifacts(
+    project_root: Path,
+    *,
+    include_hashes: bool = False,
+) -> List[ModelArtifact]:
     root = project_root.resolve()
     artifacts: List[ModelArtifact] = []
     if not root.exists():
@@ -238,17 +252,19 @@ def discover_model_artifacts(project_root: Path) -> List[ModelArtifact]:
                     path=path,
                     artifact_type=artifact_type,
                     format=suffix.lstrip("."),
+                    sha256=_sha256_file(path) if include_hashes else None,
                 )
             )
     return sorted(artifacts, key=lambda artifact: str(artifact.path))
 
 
-def scan_model_supply_chain(
+def collect_model_inventory(
     project_root: Path,
     *,
     target_model: Optional[str] = None,
     target_endpoint: Optional[str] = None,
-) -> Tuple[List[Finding], List[ExecutionError]]:
+    include_hashes: bool = False,
+) -> ModelInventory:
     root = project_root.resolve()
     manifest, errors = load_model_manifest(root)
     references = discover_model_references(
@@ -256,17 +272,44 @@ def scan_model_supply_chain(
         target_model=target_model,
         target_endpoint=target_endpoint,
     )
-    artifacts = discover_model_artifacts(root)
+    artifacts = discover_model_artifacts(root, include_hashes=include_hashes)
+    return ModelInventory(
+        manifest=manifest,
+        manifest_errors=tuple(errors),
+        references=tuple(references),
+        artifacts=tuple(artifacts),
+    )
+
+
+def scan_model_supply_chain(
+    project_root: Path,
+    *,
+    target_model: Optional[str] = None,
+    target_endpoint: Optional[str] = None,
+    inventory: Optional[ModelInventory] = None,
+) -> Tuple[List[Finding], List[ExecutionError]]:
+    root = project_root.resolve()
+    inventory = inventory or collect_model_inventory(
+        root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        include_hashes=True,
+    )
 
     findings: List[Finding] = []
-    for reference in references:
-        findings.extend(_findings_for_reference(reference, manifest))
+    for reference in inventory.references:
+        findings.extend(_findings_for_reference(reference, inventory.manifest))
 
-    for artifact in artifacts:
-        findings.extend(_findings_for_artifact(artifact, manifest, root))
+    artifact_hashes: dict[str, str] = {
+        _normalize_manifest_path(artifact.path, root): artifact.sha256
+        for artifact in inventory.artifacts
+        if artifact.sha256
+    }
+    for artifact in inventory.artifacts:
+        findings.extend(_findings_for_artifact(artifact, inventory.manifest, root, artifact_hashes))
 
-    findings.extend(_findings_for_manifest(manifest, root))
-    return _dedupe_findings(findings), errors
+    findings.extend(_findings_for_manifest(inventory.manifest, root, artifact_hashes))
+    return _dedupe_findings(findings), list(inventory.manifest_errors)
 
 
 def _iter_text_scan_files(root: Path) -> Iterable[Path]:
@@ -287,7 +330,7 @@ def _iter_text_scan_files(root: Path) -> Iterable[Path]:
             path = current_root / filename
             if path.name == MODEL_MANIFEST_NAME:
                 continue
-            if path.name in TEXT_SCAN_NAMES or path.suffix.lower() in TEXT_SCAN_SUFFIXES:
+            if _is_text_scan_file(path):
                 paths.append(path)
     return sorted(paths)
 
@@ -417,6 +460,7 @@ def _findings_for_artifact(
     artifact: ModelArtifact,
     manifest: ModelManifest,
     root: Path,
+    artifact_hashes: dict[str, str],
 ) -> List[Finding]:
     findings: List[Finding] = []
     manifest_entry = manifest.artifact_entry(artifact.path, root)
@@ -438,7 +482,7 @@ def _findings_for_artifact(
         )
 
     if manifest_entry is None or not manifest_entry.sha256:
-        actual_hash = _sha256_file(artifact.path)
+        actual_hash = _artifact_sha256(artifact, root, artifact_hashes)
         findings.append(
             Finding(
                 severity=Severity.MEDIUM,
@@ -483,13 +527,17 @@ def _findings_for_artifact(
     return findings
 
 
-def _findings_for_manifest(manifest: ModelManifest, root: Path) -> List[Finding]:
+def _findings_for_manifest(
+    manifest: ModelManifest,
+    root: Path,
+    artifact_hashes: dict[str, str],
+) -> List[Finding]:
     findings: List[Finding] = []
     for entry in (*manifest.models, *manifest.adapters):
         if entry.path:
             path = root / entry.path
             if path.exists() and entry.sha256:
-                actual_hash = _sha256_file(path)
+                actual_hash = _cached_sha256(path, root, artifact_hashes)
                 expected_hash = _normalize_sha256(entry.sha256)
                 if expected_hash and actual_hash.lower() != expected_hash.lower():
                     findings.append(
@@ -520,6 +568,27 @@ def _findings_for_manifest(manifest: ModelManifest, root: Path) -> List[Finding]
     return findings
 
 
+def _artifact_sha256(
+    artifact: ModelArtifact,
+    root: Path,
+    artifact_hashes: dict[str, str],
+) -> str:
+    if artifact.sha256:
+        artifact_hashes.setdefault(_normalize_manifest_path(artifact.path, root), artifact.sha256)
+        return artifact.sha256
+    return _cached_sha256(artifact.path, root, artifact_hashes)
+
+
+def _cached_sha256(path: Path, root: Path, artifact_hashes: dict[str, str]) -> str:
+    rel_path = _normalize_manifest_path(path, root)
+    digest = artifact_hashes.get(rel_path)
+    if digest:
+        return digest
+    digest = _sha256_file(path)
+    artifact_hashes[rel_path] = digest
+    return digest
+
+
 def _source_file_text(reference: ModelReference) -> Optional[str]:
     return str(reference.source_file) if reference.source_file else None
 
@@ -528,6 +597,8 @@ def _infer_model_source(model_name: str, endpoint: Optional[str]) -> str:
     normalized_endpoint = (endpoint or "").lower()
     if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
         return "local"
+    if "bedrock" in normalized_endpoint or _looks_like_bedrock_model_id(model_name):
+        return "bedrock"
     if "/" in model_name:
         return "huggingface"
     if "localhost:11434" in normalized_endpoint or "ollama" in normalized_endpoint:
@@ -549,6 +620,31 @@ def _line_looks_model_related(line: str) -> bool:
             "model",
             "peft",
             "pretrained",
+        )
+    )
+
+
+def _is_text_scan_file(path: Path) -> bool:
+    return (
+        path.name in TEXT_SCAN_NAMES
+        or path.name.startswith(".env.")
+        or path.suffix.lower() in TEXT_SCAN_SUFFIXES
+    )
+
+
+def _looks_like_bedrock_model_id(model_name: str) -> bool:
+    normalized = model_name.lower()
+    return normalized.startswith(
+        (
+            "ai21.",
+            "amazon.",
+            "anthropic.",
+            "cohere.",
+            "deepseek.",
+            "meta.",
+            "mistral.",
+            "stability.",
+            "writer.",
         )
     )
 
@@ -660,8 +756,10 @@ __all__ = [
     "MODEL_MANIFEST_NAME",
     "MODEL_SUPPLY_CHAIN_CATEGORY",
     "ModelArtifact",
+    "ModelInventory",
     "ModelManifest",
     "ModelReference",
+    "collect_model_inventory",
     "discover_model_artifacts",
     "discover_model_references",
     "load_model_manifest",

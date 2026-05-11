@@ -52,6 +52,10 @@ def test_discovery_excludes_tests_fixtures_and_virtualenv_dirs(tmp_path):
     venv.parent.mkdir()
     venv.write_text("ignored==1.0.0", encoding="utf-8")
 
+    worktree = tmp_path / ".worktrees" / "feature" / "requirements.txt"
+    worktree.parent.mkdir(parents=True)
+    worktree.write_text("ignored-worktree==1.0.0", encoding="utf-8")
+
     assert discover_requirement_files(tmp_path) == [included]
 
 

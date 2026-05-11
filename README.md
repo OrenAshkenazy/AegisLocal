@@ -271,7 +271,7 @@ generation, Python dependency supply-chain risk, and model provenance hygiene.
 
 Planned expansion areas include richer RAG/vector tests, real tool-agent
 execution scenarios, misinformation checks, downstream output-handling tests,
-explicit resource-exhaustion probes, and richer AI BOM export.
+and explicit resource-exhaustion probes.
 
 ## Static Scan Behavior
 
@@ -365,6 +365,52 @@ base_model = "local-model"
 path = "models/adapters/support-lora.safetensors"
 sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 approved = true
+```
+
+## SBOM/AIBOM Output
+
+AegisLocal can write separate CycloneDX JSON inventories for software packages
+and AI/model assets:
+
+```bash
+uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json
+```
+
+This writes:
+
+- `bom.sbom.cdx.json` for Python package inventory
+- `bom.aibom.cdx.json` for model, adapter, and provenance inventory
+
+The SBOM includes:
+
+- PyPI dependency components discovered by the static scanner
+
+The AIBOM includes:
+
+- model references discovered from CLI/config/code
+- local model and adapter artifacts with SHA256 hashes
+- approved model/adaptor metadata from `aegislocal.models.toml`
+- AegisLocal properties for source file, artifact type, model source, approval
+  status, format, and base model where available
+
+The `bom` command does not run dynamic payloads, does not call the target or
+judge model, and does not perform OSV vulnerability lookups. If you want to
+include a runtime model that is not present in local config, pass it explicitly:
+
+```bash
+uv run python main.py bom \
+  --project-root ~/dev/familia-ai \
+  --target-model llama3.1:8b \
+  --target-endpoint http://localhost:11434/v1/chat/completions \
+  --output bom.cdx.json
+```
+
+Inventory warnings, such as unsupported requirement lines, are reported but do
+not fail `bom` by default. Use `--strict` when CI should fail on incomplete
+inventory:
+
+```bash
+uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json --strict
 ```
 
 ## Development
