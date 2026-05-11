@@ -56,7 +56,7 @@ HF_MODEL_RE = re.compile(
     r"(?:@(?P<revision>[A-Za-z0-9_.-]{7,40}))?"
 )
 MODEL_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(?:target_)?(?:base_)?model(?:_id|_name)?\b\s*[:=]\s*[\"']?([^\"'\s,#]+)"
+    r"(?i)\b(?:[a-z0-9]+_)*(?:target_)?(?:base_)?model(?:_id|_name)?\b\s*[:=]\s*[\"']?([^\"'\s,#]+)"
 )
 TRUST_REMOTE_CODE_RE = re.compile(r"(?i)\btrust_remote_code\b\s*[:=]\s*true\b")
 FULL_SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
@@ -330,7 +330,7 @@ def _iter_text_scan_files(root: Path) -> Iterable[Path]:
             path = current_root / filename
             if path.name == MODEL_MANIFEST_NAME:
                 continue
-            if path.name in TEXT_SCAN_NAMES or path.suffix.lower() in TEXT_SCAN_SUFFIXES:
+            if _is_text_scan_file(path):
                 paths.append(path)
     return sorted(paths)
 
@@ -597,6 +597,8 @@ def _infer_model_source(model_name: str, endpoint: Optional[str]) -> str:
     normalized_endpoint = (endpoint or "").lower()
     if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
         return "local"
+    if "bedrock" in normalized_endpoint or _looks_like_bedrock_model_id(model_name):
+        return "bedrock"
     if "/" in model_name:
         return "huggingface"
     if "localhost:11434" in normalized_endpoint or "ollama" in normalized_endpoint:
@@ -618,6 +620,31 @@ def _line_looks_model_related(line: str) -> bool:
             "model",
             "peft",
             "pretrained",
+        )
+    )
+
+
+def _is_text_scan_file(path: Path) -> bool:
+    return (
+        path.name in TEXT_SCAN_NAMES
+        or path.name.startswith(".env.")
+        or path.suffix.lower() in TEXT_SCAN_SUFFIXES
+    )
+
+
+def _looks_like_bedrock_model_id(model_name: str) -> bool:
+    normalized = model_name.lower()
+    return normalized.startswith(
+        (
+            "ai21.",
+            "amazon.",
+            "anthropic.",
+            "cohere.",
+            "deepseek.",
+            "meta.",
+            "mistral.",
+            "stability.",
+            "writer.",
         )
     )
 

@@ -47,6 +47,20 @@ def test_discovers_cli_and_config_model_references(tmp_path):
     assert any(reference.artifact_type == "remote_code" for reference in references)
 
 
+def test_discovers_bedrock_model_id_from_env_variant(tmp_path):
+    config = tmp_path / ".env.development"
+    config.write_text(
+        "AWS_BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0\n",
+        encoding="utf-8",
+    )
+
+    references = discover_model_references(tmp_path)
+
+    assert [(reference.name, reference.source, reference.source_file) for reference in references] == [
+        ("anthropic.claude-3-sonnet-20240229-v1:0", "bedrock", config)
+    ]
+
+
 def test_model_scan_reports_unapproved_unpinned_and_remote_code(tmp_path):
     config = tmp_path / "settings.toml"
     config.write_text(

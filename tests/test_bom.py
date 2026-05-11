@@ -278,6 +278,38 @@ def test_bom_command_includes_explicit_runtime_model(tmp_path):
     assert "model:ollama/llama3.1%3A8b" in aibom_refs
 
 
+def test_bom_command_includes_bedrock_model_from_env_variant(tmp_path):
+    env_file = tmp_path / "backend" / ".env.development"
+    env_file.parent.mkdir()
+    env_file.write_text(
+        "AWS_BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "bom.cdx.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "bom",
+            "--project-root",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+
+    aibom = json.loads((tmp_path / "bom.aibom.cdx.json").read_text(encoding="utf-8"))
+    component = _component_by_ref(
+        aibom,
+        "model:bedrock/anthropic.claude-3-sonnet-20240229-v1%3A0",
+    )
+
+    assert result.exit_code == 0
+    assert component["name"] == "anthropic.claude-3-sonnet-20240229-v1:0"
+    assert _property(component, "aegislocal:model-source") == "bedrock"
+    assert _property(component, "aegislocal:source-file") == str(env_file)
+
+
 def test_bom_command_inventory_warnings_are_nonfatal_by_default(tmp_path):
     requirements = tmp_path / "requirements.txt"
     requirements.write_text("-e .\n", encoding="utf-8")
