@@ -17,7 +17,7 @@ from engines.dynamic_fuzzer import (
     load_payloads,
     run_dynamic_scan,
 )
-from engines.bom import build_cyclonedx_bom, write_cyclonedx_bom
+from engines.bom import build_cyclonedx_bom, collect_bom_dependencies, write_cyclonedx_bom
 from engines.model_scanner import collect_model_inventory, scan_model_supply_chain
 from engines.static_scanner import (
     discover_manifest_files,
@@ -323,7 +323,7 @@ def bom_command(
     ),
 ) -> None:
     manifest_files = discover_manifest_files(project_root)
-    deps, dep_errors = parse_manifest_files(manifest_files)
+    deps, dep_errors = collect_bom_dependencies(manifest_files)
     model_inventory = collect_model_inventory(
         project_root,
         target_model=target_model,

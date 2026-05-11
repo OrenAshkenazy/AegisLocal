@@ -5,7 +5,13 @@ import json
 
 from typer.testing import CliRunner
 
-from engines.bom import CYCLONEDX_SPEC_VERSION, build_cyclonedx_bom, write_cyclonedx_bom
+from engines.bom import (
+    CYCLONEDX_SPEC_VERSION,
+    UNRESOLVED_VERSION,
+    build_cyclonedx_bom,
+    collect_bom_dependencies,
+    write_cyclonedx_bom,
+)
 from engines.static_scanner import Dependency
 from main import app
 
@@ -152,6 +158,56 @@ def test_bom_command_writes_inventory_without_default_runtime_model(tmp_path):
     assert result.exit_code == 0
     assert "pkg:pypi/requests@2.32.4" in bom_refs
     assert "model:ollama/llama3.1%3A8b" not in bom_refs
+
+
+def test_collect_bom_dependencies_includes_unpinned_requirements(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text(
+        "\n".join(
+            [
+                "fastapi",
+                "python-jose[cryptography]",
+                "httpx>=0.27",
+                "requests==2.32.4",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    dependencies, errors = collect_bom_dependencies([requirements])
+
+    assert errors == []
+    assert [(dependency.name, dependency.version) for dependency in dependencies] == [
+        ("fastapi", UNRESOLVED_VERSION),
+        ("python-jose", UNRESOLVED_VERSION),
+        ("httpx", UNRESOLVED_VERSION),
+        ("requests", "2.32.4"),
+    ]
+
+
+def test_bom_command_outputs_unpinned_requirement_components(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("fastapi\npython-jose[cryptography]\n", encoding="utf-8")
+    output = tmp_path / "bom.cdx.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "bom",
+            "--project-root",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+
+    bom = json.loads(output.read_text(encoding="utf-8"))
+    fastapi = _component_by_ref(bom, "pkg:pypi/fastapi")
+    python_jose = _component_by_ref(bom, "pkg:pypi/python-jose")
+
+    assert result.exit_code == 0
+    assert fastapi["version"] == UNRESOLVED_VERSION
+    assert python_jose["version"] == UNRESOLVED_VERSION
 
 
 def test_bom_command_includes_explicit_runtime_model(tmp_path):

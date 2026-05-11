@@ -2,12 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+
+from core.models import ErrorSource, ExecutionError
 from engines.model_scanner import (
     MODEL_MANIFEST_NAME,
     ModelArtifact,
@@ -24,6 +31,14 @@ from engines.static_scanner import Dependency
 
 
 CYCLONEDX_SPEC_VERSION = "1.6"
+UNRESOLVED_VERSION = "unresolved"
+
+PINNED_REQUIREMENT_RE = re.compile(
+    r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,_.-]+\])?\s*==\s*([^\s;#]+)"
+)
+REQUIREMENT_NAME_RE = re.compile(
+    r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,_.-]+\])?"
+)
 
 
 def build_cyclonedx_bom(
@@ -104,9 +119,223 @@ def write_cyclonedx_bom(path: Path, bom: dict) -> None:
     path.write_text(json.dumps(bom, indent=2) + "\n", encoding="utf-8")
 
 
+def collect_bom_dependencies(
+    manifest_files: Iterable[Path],
+) -> Tuple[List[Dependency], List[ExecutionError]]:
+    dependencies: List[Dependency] = []
+    errors: List[ExecutionError] = []
+    manifest_paths = list(manifest_files)
+    lock_dirs = {
+        path.parent.resolve()
+        for path in manifest_paths
+        if path.name in {"uv.lock", "poetry.lock"}
+    }
+    for path in manifest_paths:
+        if path.name == "pyproject.toml" and path.parent.resolve() in lock_dirs:
+            continue
+        parsed_dependencies, parsed_errors = _parse_bom_manifest_file(path)
+        dependencies.extend(parsed_dependencies)
+        errors.extend(parsed_errors)
+    return _dedupe_dependencies(dependencies), errors
+
+
+def _parse_bom_manifest_file(path: Path) -> Tuple[List[Dependency], List[ExecutionError]]:
+    if _is_requirement_file(path.name):
+        return _parse_bom_requirement_file(path)
+    if path.name == "pyproject.toml":
+        return _parse_bom_pyproject_file(path)
+    if path.name in {"uv.lock", "poetry.lock"}:
+        return _parse_bom_lock_file(path)
+    return [], []
+
+
+def _parse_bom_requirement_file(path: Path) -> Tuple[List[Dependency], List[ExecutionError]]:
+    dependencies: List[Dependency] = []
+    errors: List[ExecutionError] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        return [], [
+            ExecutionError(
+                source=ErrorSource.STATIC,
+                message="Unable to read requirements file",
+                path=str(path),
+                detail=str(exc),
+            )
+        ]
+
+    for line_number, raw_line in enumerate(lines, start=1):
+        normalized = raw_line.split("#", 1)[0].strip()
+        if not normalized:
+            continue
+        if normalized.startswith("-"):
+            errors.append(
+                ExecutionError(
+                    source=ErrorSource.STATIC,
+                    message="Unsupported requirement line; entry was not included in BOM inventory",
+                    path=f"{path}:{line_number}",
+                    detail=raw_line,
+                )
+            )
+            continue
+        dependency = _dependency_from_requirement_text(normalized, path, line_number)
+        if dependency:
+            dependencies.append(dependency)
+    return dependencies, errors
+
+
+def _parse_bom_pyproject_file(path: Path) -> Tuple[List[Dependency], List[ExecutionError]]:
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [], [
+            ExecutionError(
+                source=ErrorSource.STATIC,
+                message="Unable to read pyproject.toml",
+                path=str(path),
+                detail=str(exc),
+            )
+        ]
+
+    dependencies: List[Dependency] = []
+    project = data.get("project") if isinstance(data.get("project"), dict) else {}
+    for spec in project.get("dependencies") or []:
+        dependency = _dependency_from_requirement_text(spec, path, 1)
+        if dependency:
+            dependencies.append(dependency)
+    optional_dependencies = project.get("optional-dependencies") or {}
+    if isinstance(optional_dependencies, dict):
+        for specs in optional_dependencies.values():
+            for spec in specs or []:
+                dependency = _dependency_from_requirement_text(spec, path, 1)
+                if dependency:
+                    dependencies.append(dependency)
+
+    poetry = ((data.get("tool") or {}).get("poetry") or {})
+    if isinstance(poetry, dict):
+        for section_name in ("dependencies", "dev-dependencies"):
+            _extend_poetry_bom_dependencies(
+                dependencies,
+                poetry.get(section_name) or {},
+                path,
+            )
+        groups = poetry.get("group") or {}
+        if isinstance(groups, dict):
+            for group in groups.values():
+                if isinstance(group, dict):
+                    _extend_poetry_bom_dependencies(
+                        dependencies,
+                        group.get("dependencies") or {},
+                        path,
+                    )
+
+    return dependencies, []
+
+
+def _parse_bom_lock_file(path: Path) -> Tuple[List[Dependency], List[ExecutionError]]:
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        return [], [
+            ExecutionError(
+                source=ErrorSource.STATIC,
+                message=f"Unable to read {path.name}",
+                path=str(path),
+                detail=str(exc),
+            )
+        ]
+
+    dependencies: List[Dependency] = []
+    for package in data.get("package") or []:
+        if not isinstance(package, dict):
+            continue
+        name = package.get("name")
+        version = package.get("version")
+        if isinstance(name, str) and isinstance(version, str):
+            dependencies.append(
+                Dependency(name=name, version=version, source_file=path, line_number=1)
+            )
+    return dependencies, []
+
+
+def _dependency_from_requirement_text(
+    spec: object,
+    path: Path,
+    line_number: int,
+) -> Optional[Dependency]:
+    if not isinstance(spec, str):
+        return None
+    normalized = spec.split(";", 1)[0].strip()
+    if not normalized:
+        return None
+    pinned = PINNED_REQUIREMENT_RE.match(normalized)
+    if pinned:
+        return Dependency(
+            name=pinned.group(1),
+            version=pinned.group(2),
+            source_file=path,
+            line_number=line_number,
+        )
+    match = REQUIREMENT_NAME_RE.match(normalized)
+    if not match:
+        return None
+    return Dependency(
+        name=match.group(1),
+        version=UNRESOLVED_VERSION,
+        source_file=path,
+        line_number=line_number,
+    )
+
+
+def _extend_poetry_bom_dependencies(
+    dependencies: List[Dependency],
+    section: object,
+    path: Path,
+) -> None:
+    if not isinstance(section, dict):
+        return
+    for name, raw_spec in section.items():
+        if name.lower() == "python":
+            continue
+        version = UNRESOLVED_VERSION
+        if isinstance(raw_spec, str) and raw_spec.startswith("=="):
+            version = raw_spec[2:].strip() or UNRESOLVED_VERSION
+        elif isinstance(raw_spec, dict):
+            raw_version = raw_spec.get("version")
+            if isinstance(raw_version, str) and raw_version.startswith("=="):
+                version = raw_version[2:].strip() or UNRESOLVED_VERSION
+        dependencies.append(
+            Dependency(name=name, version=version, source_file=path, line_number=1)
+        )
+
+
+def _dedupe_dependencies(dependencies: Iterable[Dependency]) -> List[Dependency]:
+    seen = set()
+    deduped: List[Dependency] = []
+    for dependency in dependencies:
+        key = (dependency.name.lower(), dependency.version, str(dependency.source_file))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(dependency)
+    return deduped
+
+
+def _is_requirement_file(filename: str) -> bool:
+    return (
+        filename == "requirements.txt"
+        or (filename.startswith("requirements-") and filename.endswith(".txt"))
+        or (filename.startswith("requirements.") and filename.endswith(".txt"))
+    )
+
+
 def _dependency_component(dependency: Dependency) -> dict:
     package_name = _normalize_pypi_name(dependency.name)
-    purl = f"pkg:pypi/{quote(package_name)}@{quote(dependency.version)}"
+    purl = f"pkg:pypi/{quote(package_name)}"
+    if dependency.version != UNRESOLVED_VERSION:
+        purl = f"{purl}@{quote(dependency.version)}"
     return {
         "type": "library",
         "bom-ref": purl,
@@ -275,4 +504,10 @@ def _stable_bom_uuid(root: Path, component_refs: Iterable[str]) -> str:
     return str(uuid.uuid5(aegis_namespace, content))
 
 
-__all__ = ["CYCLONEDX_SPEC_VERSION", "build_cyclonedx_bom", "write_cyclonedx_bom"]
+__all__ = [
+    "CYCLONEDX_SPEC_VERSION",
+    "UNRESOLVED_VERSION",
+    "build_cyclonedx_bom",
+    "collect_bom_dependencies",
+    "write_cyclonedx_bom",
+]
