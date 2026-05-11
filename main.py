@@ -316,6 +316,11 @@ def bom_command(
         "--target-endpoint",
         help="Optional runtime endpoint used only to infer model source metadata.",
     ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit nonzero when inventory warnings are encountered.",
+    ),
 ) -> None:
     manifest_files = discover_manifest_files(project_root)
     deps, dep_errors = parse_manifest_files(manifest_files)
@@ -341,7 +346,7 @@ def bom_command(
             f"Wrote BOM with {len(execution_errors)} inventory warning(s): {output_file}",
             err=True,
         )
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1 if strict else 0)
 
     typer.echo(f"Wrote BOM: {output_file}")
 

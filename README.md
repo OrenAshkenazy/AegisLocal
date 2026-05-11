@@ -397,6 +397,14 @@ uv run python main.py bom \
   --output bom.cdx.json
 ```
 
+Inventory warnings, such as unsupported requirement lines, are reported but do
+not fail `bom` by default. Use `--strict` when CI should fail on incomplete
+inventory:
+
+```bash
+uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json --strict
+```
+
 ## Development
 
 Run tests:

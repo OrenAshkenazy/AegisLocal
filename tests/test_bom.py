@@ -179,6 +179,49 @@ def test_bom_command_includes_explicit_runtime_model(tmp_path):
     assert "model:ollama/llama3.1%3A8b" in bom_refs
 
 
+def test_bom_command_inventory_warnings_are_nonfatal_by_default(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("-e .\n", encoding="utf-8")
+    output = tmp_path / "bom.cdx.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "bom",
+            "--project-root",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output.exists()
+    assert "Wrote BOM with 1 inventory warning(s)" in result.output
+
+
+def test_bom_command_strict_inventory_warnings_are_fatal(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("-e .\n", encoding="utf-8")
+    output = tmp_path / "bom.cdx.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "bom",
+            "--project-root",
+            str(tmp_path),
+            "--output",
+            str(output),
+            "--strict",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert output.exists()
+    assert "Wrote BOM with 1 inventory warning(s)" in result.output
+
+
 def _component_by_ref(bom, bom_ref):
     for component in bom["components"]:
         if component["bom-ref"] == bom_ref:

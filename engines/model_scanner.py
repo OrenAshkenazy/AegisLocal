@@ -26,6 +26,7 @@ EXCLUDED_DIR_NAMES = {
     ".pytest_cache",
     ".ruff_cache",
     ".venv",
+    ".worktrees",
     "__pycache__",
     "build",
     "dist",
