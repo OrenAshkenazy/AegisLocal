@@ -297,6 +297,7 @@ def scan_model_supply_chain(
     )
 
     findings: List[Finding] = []
+    hash_errors: List[ExecutionError] = []
     for reference in inventory.references:
         findings.extend(_findings_for_reference(reference, inventory.manifest))
 
@@ -306,10 +307,23 @@ def scan_model_supply_chain(
         if artifact.sha256
     }
     for artifact in inventory.artifacts:
-        findings.extend(_findings_for_artifact(artifact, inventory.manifest, root, artifact_hashes))
+        artifact_findings, artifact_errors = _findings_for_artifact(
+            artifact,
+            inventory.manifest,
+            root,
+            artifact_hashes,
+        )
+        findings.extend(artifact_findings)
+        hash_errors.extend(artifact_errors)
 
-    findings.extend(_findings_for_manifest(inventory.manifest, root, artifact_hashes))
-    return _dedupe_findings(findings), list(inventory.manifest_errors)
+    manifest_findings, manifest_hash_errors = _findings_for_manifest(
+        inventory.manifest,
+        root,
+        artifact_hashes,
+    )
+    findings.extend(manifest_findings)
+    hash_errors.extend(manifest_hash_errors)
+    return _dedupe_findings(findings), [*inventory.manifest_errors, *hash_errors]
 
 
 def _iter_text_scan_files(root: Path) -> Iterable[Path]:
@@ -461,8 +475,9 @@ def _findings_for_artifact(
     manifest: ModelManifest,
     root: Path,
     artifact_hashes: dict[str, str],
-) -> List[Finding]:
+) -> Tuple[List[Finding], List[ExecutionError]]:
     findings: List[Finding] = []
+    errors: List[ExecutionError] = []
     manifest_entry = manifest.artifact_entry(artifact.path, root)
     source_file = str(artifact.path)
     relative_path = _normalize_manifest_path(artifact.path, root)
@@ -482,13 +497,20 @@ def _findings_for_artifact(
         )
 
     if manifest_entry is None or not manifest_entry.sha256:
-        actual_hash = _artifact_sha256(artifact, root, artifact_hashes)
+        actual_hash, hash_error = _artifact_sha256_or_error(
+            artifact,
+            root,
+            artifact_hashes,
+            "Unable to hash model artifact",
+        )
+        if hash_error:
+            errors.append(hash_error)
         findings.append(
             Finding(
                 severity=Severity.MEDIUM,
                 category=MODEL_SUPPLY_CHAIN_CATEGORY,
                 description=f"Local {artifact.artifact_type} artifact '{relative_path}' has no approved SHA256 in {MODEL_MANIFEST_NAME}.",
-                remediation=f"Record path = '{relative_path}', sha256 = '{actual_hash}', source, license, and approved = true in {MODEL_MANIFEST_NAME}.",
+                remediation=_missing_artifact_hash_remediation(relative_path, actual_hash),
                 source_file=source_file,
                 artifact_type=artifact.artifact_type,
                 model_name=artifact.name,
@@ -524,20 +546,29 @@ def _findings_for_artifact(
                 )
             )
 
-    return findings
+    return findings, errors
 
 
 def _findings_for_manifest(
     manifest: ModelManifest,
     root: Path,
     artifact_hashes: dict[str, str],
-) -> List[Finding]:
+) -> Tuple[List[Finding], List[ExecutionError]]:
     findings: List[Finding] = []
+    errors: List[ExecutionError] = []
     for entry in (*manifest.models, *manifest.adapters):
         if entry.path:
             path = root / entry.path
             if path.exists() and entry.sha256:
-                actual_hash = _cached_sha256(path, root, artifact_hashes)
+                actual_hash, hash_error = _cached_sha256_or_error(
+                    path,
+                    root,
+                    artifact_hashes,
+                    "Unable to hash manifest model artifact",
+                )
+                if hash_error:
+                    errors.append(hash_error)
+                    continue
                 expected_hash = _normalize_sha256(entry.sha256)
                 if expected_hash and actual_hash.lower() != expected_hash.lower():
                     findings.append(
@@ -565,28 +596,36 @@ def _findings_for_manifest(
                     model_source=entry.source,
                 )
             )
-    return findings
+    return findings, errors
 
 
-def _artifact_sha256(
+def _artifact_sha256_or_error(
     artifact: ModelArtifact,
     root: Path,
     artifact_hashes: dict[str, str],
-) -> str:
+    message: str,
+) -> Tuple[Optional[str], Optional[ExecutionError]]:
     if artifact.sha256:
         artifact_hashes.setdefault(_normalize_manifest_path(artifact.path, root), artifact.sha256)
-        return artifact.sha256
-    return _cached_sha256(artifact.path, root, artifact_hashes)
+        return artifact.sha256, None
+    return _cached_sha256_or_error(artifact.path, root, artifact_hashes, message)
 
 
-def _cached_sha256(path: Path, root: Path, artifact_hashes: dict[str, str]) -> str:
+def _cached_sha256_or_error(
+    path: Path,
+    root: Path,
+    artifact_hashes: dict[str, str],
+    message: str,
+) -> Tuple[Optional[str], Optional[ExecutionError]]:
     rel_path = _normalize_manifest_path(path, root)
     digest = artifact_hashes.get(rel_path)
     if digest:
-        return digest
-    digest = _sha256_file(path)
+        return digest, None
+    digest, error = _sha256_file_or_error(path, message)
+    if error:
+        return None, error
     artifact_hashes[rel_path] = digest
-    return digest
+    return digest, None
 
 
 def _source_file_text(reference: ModelReference) -> Optional[str]:
@@ -701,10 +740,30 @@ def _normalize_configured_path(path: str) -> str:
 
 
 def _normalize_sha256(value: str) -> Optional[str]:
-    digest = value.removeprefix("sha256:").strip()
-    if re.fullmatch(r"[A-Fa-f0-9]{64}", digest):
+    digest = value.lower().strip().removeprefix("sha256:")
+    if re.fullmatch(r"[a-f0-9]{64}", digest):
         return digest
     return None
+
+
+def _missing_artifact_hash_remediation(relative_path: str, actual_hash: Optional[str]) -> str:
+    digest = actual_hash or "<sha256>"
+    return (
+        f"Record path = '{relative_path}', sha256 = '{digest}', source, license, "
+        f"and approved = true in {MODEL_MANIFEST_NAME}."
+    )
+
+
+def _sha256_file_or_error(path: Path, message: str) -> Tuple[Optional[str], Optional[ExecutionError]]:
+    try:
+        return _sha256_file(path), None
+    except OSError as exc:
+        return None, ExecutionError(
+            source=ErrorSource.STATIC,
+            message=message,
+            path=str(path),
+            detail=str(exc),
+        )
 
 
 def _sha256_file(path: Path) -> str:

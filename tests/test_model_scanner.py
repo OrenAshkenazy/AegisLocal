@@ -185,6 +185,56 @@ def test_manifest_validation_reuses_computed_artifact_hash(tmp_path, monkeypatch
     assert calls == [model_file]
 
 
+def test_manifest_hash_mismatch_is_reported_with_uppercase_sha256_prefix(tmp_path):
+    model_file = tmp_path / "models" / "model.gguf"
+    model_file.parent.mkdir()
+    model_file.write_bytes(b"changed")
+    expected_hash = hashlib.sha256(b"original").hexdigest().upper()
+    manifest = tmp_path / "aegislocal.models.toml"
+    manifest.write_text(
+        f"""
+[[models]]
+name = "local-model"
+source = "local"
+path = "models/model.gguf"
+sha256 = "SHA256:{expected_hash}"
+license = "unknown"
+approved = true
+""",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert errors == []
+    assert any("does not match the approved SHA256" in finding.description for finding in findings)
+
+
+def test_manifest_hashing_error_is_reported_without_crashing(tmp_path):
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    manifest = tmp_path / "aegislocal.models.toml"
+    manifest.write_text(
+        f"""
+[[models]]
+name = "local-model"
+source = "local"
+path = "models"
+sha256 = "{hashlib.sha256(b'original').hexdigest()}"
+license = "unknown"
+approved = true
+""",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert findings == []
+    assert len(errors) == 1
+    assert errors[0].message == "Unable to hash manifest model artifact"
+    assert errors[0].path == str(model_dir)
+
+
 def test_adapter_without_base_model_is_reported(tmp_path):
     adapter = tmp_path / "models" / "lora" / "adapter.safetensors"
     adapter.parent.mkdir(parents=True)
