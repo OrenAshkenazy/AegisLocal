@@ -300,13 +300,13 @@ def scan_model_supply_chain(
     for reference in inventory.references:
         findings.extend(_findings_for_reference(reference, inventory.manifest))
 
-    artifact_hashes = {
+    artifact_hashes: dict[str, str] = {
         _normalize_manifest_path(artifact.path, root): artifact.sha256
         for artifact in inventory.artifacts
         if artifact.sha256
     }
     for artifact in inventory.artifacts:
-        findings.extend(_findings_for_artifact(artifact, inventory.manifest, root))
+        findings.extend(_findings_for_artifact(artifact, inventory.manifest, root, artifact_hashes))
 
     findings.extend(_findings_for_manifest(inventory.manifest, root, artifact_hashes))
     return _dedupe_findings(findings), list(inventory.manifest_errors)
@@ -460,6 +460,7 @@ def _findings_for_artifact(
     artifact: ModelArtifact,
     manifest: ModelManifest,
     root: Path,
+    artifact_hashes: dict[str, str],
 ) -> List[Finding]:
     findings: List[Finding] = []
     manifest_entry = manifest.artifact_entry(artifact.path, root)
@@ -481,7 +482,7 @@ def _findings_for_artifact(
         )
 
     if manifest_entry is None or not manifest_entry.sha256:
-        actual_hash = artifact.sha256 or _sha256_file(artifact.path)
+        actual_hash = _artifact_sha256(artifact, root, artifact_hashes)
         findings.append(
             Finding(
                 severity=Severity.MEDIUM,
@@ -536,8 +537,7 @@ def _findings_for_manifest(
         if entry.path:
             path = root / entry.path
             if path.exists() and entry.sha256:
-                rel_path = _normalize_manifest_path(path, root)
-                actual_hash = artifact_hashes.get(rel_path) or _sha256_file(path)
+                actual_hash = _cached_sha256(path, root, artifact_hashes)
                 expected_hash = _normalize_sha256(entry.sha256)
                 if expected_hash and actual_hash.lower() != expected_hash.lower():
                     findings.append(
@@ -566,6 +566,27 @@ def _findings_for_manifest(
                 )
             )
     return findings
+
+
+def _artifact_sha256(
+    artifact: ModelArtifact,
+    root: Path,
+    artifact_hashes: dict[str, str],
+) -> str:
+    if artifact.sha256:
+        artifact_hashes.setdefault(_normalize_manifest_path(artifact.path, root), artifact.sha256)
+        return artifact.sha256
+    return _cached_sha256(artifact.path, root, artifact_hashes)
+
+
+def _cached_sha256(path: Path, root: Path, artifact_hashes: dict[str, str]) -> str:
+    rel_path = _normalize_manifest_path(path, root)
+    digest = artifact_hashes.get(rel_path)
+    if digest:
+        return digest
+    digest = _sha256_file(path)
+    artifact_hashes[rel_path] = digest
+    return digest
 
 
 def _source_file_text(reference: ModelReference) -> Optional[str]:
