@@ -117,7 +117,6 @@ async def run_scan(
     fallback_judge_model: Optional[str],
     include_evidence: bool,
     console: ScanConsole,
-    bom_output_file: Optional[Path] = None,
 ) -> ScanReport:
     start = time.monotonic()
 
@@ -137,7 +136,6 @@ async def run_scan(
         project_root,
         target_model=target_model,
         target_endpoint=target_endpoint,
-        include_hashes=bom_output_file is not None,
     )
     model_findings, model_errors = scan_model_supply_chain(
         project_root,
@@ -162,18 +160,6 @@ async def run_scan(
         )
 
     duration = time.monotonic() - start
-    scanner_version = _get_version()
-
-    if bom_output_file is not None:
-        bom = build_cyclonedx_bom(
-            project_root,
-            deps,
-            target_model=target_model,
-            target_endpoint=target_endpoint,
-            scanner_version=scanner_version,
-            model_inventory=model_inventory,
-        )
-        write_cyclonedx_bom(bom_output_file, bom)
 
     return build_report(
         target_endpoint=target_endpoint,
@@ -271,12 +257,6 @@ def scan(
         "-o",
         help="Write JSON report to file (in addition to stdout).",
     ),
-    bom_output_file: Optional[Path] = typer.Option(
-        None,
-        "--bom-output",
-        "--bom-output-file",
-        help="Write a CycloneDX JSON SBOM/AIBOM inventory to this file.",
-    ),
 ) -> None:
     if quiet and verbose:
         typer.echo("Error: --quiet and --verbose are mutually exclusive.", err=True)
@@ -298,7 +278,6 @@ def scan(
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
             console=console,
-            bom_output_file=bom_output_file,
         )
     )
 
@@ -311,6 +290,59 @@ def scan(
         output_file.write_text(report_json, encoding="utf-8")
 
     raise typer.Exit(code=0 if report.passed_audit else 1)
+
+
+@app.command("bom")
+def bom_command(
+    project_root: Path = typer.Option(
+        Path("."),
+        "--project-root",
+        help="Project root to inventory for SBOM/AIBOM output.",
+    ),
+    output_file: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Write CycloneDX JSON SBOM/AIBOM inventory to this file.",
+    ),
+    target_model: Optional[str] = typer.Option(
+        None,
+        "--target-model",
+        help="Optional runtime model name to include in the AIBOM inventory.",
+    ),
+    target_endpoint: Optional[str] = typer.Option(
+        None,
+        "--target-endpoint",
+        help="Optional runtime endpoint used only to infer model source metadata.",
+    ),
+) -> None:
+    manifest_files = discover_manifest_files(project_root)
+    deps, dep_errors = parse_manifest_files(manifest_files)
+    model_inventory = collect_model_inventory(
+        project_root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        include_hashes=True,
+    )
+    bom = build_cyclonedx_bom(
+        project_root,
+        deps,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        scanner_version=_get_version(),
+        model_inventory=model_inventory,
+    )
+    write_cyclonedx_bom(output_file, bom)
+
+    execution_errors = [*dep_errors, *model_inventory.manifest_errors]
+    if execution_errors:
+        typer.echo(
+            f"Wrote BOM with {len(execution_errors)} inventory warning(s): {output_file}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Wrote BOM: {output_file}")
 
 
 if __name__ == "__main__":

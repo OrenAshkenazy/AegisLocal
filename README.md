@@ -373,7 +373,7 @@ AegisLocal can write a CycloneDX JSON inventory that combines Python package
 components with local AI/model components:
 
 ```bash
-uv run python main.py scan --bom-output bom.cdx.json
+uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json
 ```
 
 The BOM includes:
@@ -384,6 +384,18 @@ The BOM includes:
 - approved model/adaptor metadata from `aegislocal.models.toml`
 - AegisLocal properties for source file, artifact type, model source, approval
   status, format, and base model where available
+
+The `bom` command does not run dynamic payloads, does not call the target or
+judge model, and does not perform OSV vulnerability lookups. If you want to
+include a runtime model that is not present in local config, pass it explicitly:
+
+```bash
+uv run python main.py bom \
+  --project-root ~/dev/familia-ai \
+  --target-model llama3.1:8b \
+  --target-endpoint http://localhost:11434/v1/chat/completions \
+  --output bom.cdx.json
+```
 
 ## Development
 

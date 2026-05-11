@@ -3,8 +3,14 @@
 
 import json
 
+from typer.testing import CliRunner
+
 from engines.bom import CYCLONEDX_SPEC_VERSION, build_cyclonedx_bom, write_cyclonedx_bom
 from engines.static_scanner import Dependency
+from main import app
+
+
+runner = CliRunner()
 
 
 def test_build_cyclonedx_bom_includes_python_dependencies(tmp_path):
@@ -119,6 +125,55 @@ def test_write_cyclonedx_bom_writes_pretty_json(tmp_path):
 
     assert json.loads(output.read_text(encoding="utf-8")) == bom
     assert output.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_bom_command_writes_inventory_without_default_runtime_model(tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("requests==2.32.4\n", encoding="utf-8")
+    output = tmp_path / "bom.cdx.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "bom",
+            "--project-root",
+            str(tmp_path),
+            "--output",
+            str(output),
+        ],
+    )
+
+    bom = json.loads(output.read_text(encoding="utf-8"))
+    bom_refs = {component["bom-ref"] for component in bom["components"]}
+
+    assert result.exit_code == 0
+    assert "pkg:pypi/requests@2.32.4" in bom_refs
+    assert "model:ollama/llama3.1%3A8b" not in bom_refs
+
+
+def test_bom_command_includes_explicit_runtime_model(tmp_path):
+    output = tmp_path / "bom.cdx.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "bom",
+            "--project-root",
+            str(tmp_path),
+            "--target-model",
+            "llama3.1:8b",
+            "--target-endpoint",
+            "http://localhost:11434/v1/chat/completions",
+            "--output",
+            str(output),
+        ],
+    )
+
+    bom = json.loads(output.read_text(encoding="utf-8"))
+    bom_refs = {component["bom-ref"] for component in bom["components"]}
+
+    assert result.exit_code == 0
+    assert "model:ollama/llama3.1%3A8b" in bom_refs
 
 
 def _component_by_ref(bom, bom_ref):
