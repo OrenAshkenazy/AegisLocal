@@ -236,6 +236,30 @@ approved = true
     assert errors[0].path == str(model_dir)
 
 
+def test_manifest_missing_artifact_path_is_reported(tmp_path):
+    manifest = tmp_path / "aegislocal.models.toml"
+    manifest.write_text(
+        """
+[[models]]
+name = "local-model"
+source = "local"
+path = "models/missing.gguf"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+license = "unknown"
+approved = true
+""",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert errors == []
+    assert any(
+        "is declared in aegislocal.models.toml but is missing from disk" in finding.description
+        for finding in findings
+    )
+
+
 def test_artifact_hashing_error_is_reported_without_crashing(tmp_path, monkeypatch):
     model_file = tmp_path / "models" / "model.gguf"
     model_file.parent.mkdir()
@@ -301,6 +325,15 @@ target_model: str
 """,
         encoding="utf-8",
     )
+
+    references = discover_model_references(tmp_path)
+
+    assert references == []
+
+
+def test_unrelated_model_named_assignment_is_not_a_reference(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text('metadata_model_name = "draft"\n', encoding="utf-8")
 
     references = discover_model_references(tmp_path)
 

@@ -29,6 +29,8 @@ from engines.model_scanner import (
 from engines.static_scanner import Dependency
 
 
+# Repository-local UUID namespace generated for deterministic AegisLocal BOM serials.
+AIBOM_UUID_NAMESPACE = uuid.UUID("7896898a-2bab-4696-8022-790809696801")
 CYCLONEDX_SPEC_VERSION = "1.6"
 UNRESOLVED_VERSION = "unresolved"
 
@@ -573,9 +575,8 @@ def _safe_ref(value: str) -> str:
 
 
 def _stable_bom_uuid(root: Path, bom_kind: str, component_refs: Iterable[str]) -> str:
-    aegis_namespace = uuid.UUID("7896898a-2bab-4696-8022-790809696801")
     content = f"{root.name}:{bom_kind}:" + ",".join(sorted(component_refs))
-    return str(uuid.uuid5(aegis_namespace, content))
+    return str(uuid.uuid5(AIBOM_UUID_NAMESPACE, content))
 
 
 __all__ = [

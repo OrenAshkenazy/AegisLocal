@@ -55,7 +55,9 @@ HF_MODEL_RE = re.compile(
     r"(?:@(?P<revision>[A-Za-z0-9_.-]{7,40}))?"
 )
 MODEL_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(?:[a-z0-9]+_)*(?:target_)?(?:base_)?model(?:_id|_name)?\b\s*[:=]\s*[\"']?([^\"'\s,#]+)"
+    r"(?i)\b(?P<key>(?:(?:adapter|aws_bedrock|base|bedrock|checkpoint|embedding|"
+    r"fallback_judge|hf|judge|llm|local|target)_)?model(?:_id|_name)?)\b"
+    r"\s*[:=]\s*[\"']?(?P<value>[^\"'\s,#]+)"
 )
 TRUST_REMOTE_CODE_RE = re.compile(r"(?i)\btrust_remote_code\b\s*[:=]\s*true\b")
 FULL_SHA_RE = re.compile(r"^[a-fA-F0-9]{40}$")
@@ -406,9 +408,9 @@ def _references_from_line(
     if _line_looks_model_related(line):
         references.extend(_hf_references_from_line(path, line_number, line))
         assignment = MODEL_ASSIGNMENT_RE.search(line)
-        if assignment and _assignment_is_supported(path, assignment):
-            model_name = assignment.group(1).strip()
-            if model_name and model_name != "true":
+        if assignment:
+            model_name = assignment.group("value").strip()
+            if _assignment_value_is_supported(path, assignment, model_name):
                 source = _infer_model_source(model_name, None)
                 if source != "huggingface":
                     references.append(
@@ -583,7 +585,23 @@ def _findings_for_manifest(
     for entry in (*manifest.models, *manifest.adapters):
         if entry.path:
             path = root / entry.path
-            if path.exists() and entry.sha256:
+            if not path.exists():
+                findings.append(
+                    Finding(
+                        severity=Severity.MEDIUM,
+                        category=MODEL_SUPPLY_CHAIN_CATEGORY,
+                        description=(
+                            f"{entry.artifact_type.title()} artifact '{entry.path}' "
+                            f"is declared in {MODEL_MANIFEST_NAME} but is missing from disk."
+                        ),
+                        remediation="Restore the approved artifact at the declared path or remove the stale manifest entry.",
+                        source_file=str(manifest.path) if manifest.path else str(path),
+                        artifact_type=entry.artifact_type,
+                        model_name=entry.name,
+                        model_source=entry.source,
+                    )
+                )
+            elif entry.sha256:
                 actual_hash, hash_error = _cached_sha256_or_error(
                     path,
                     root,
@@ -662,8 +680,6 @@ def _infer_model_source(model_name: str, endpoint: Optional[str]) -> str:
         return "local"
     if "bedrock" in normalized_endpoint or _looks_like_bedrock_model_id(model_name):
         return "bedrock"
-    if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
-        return "local"
     if "/" in model_name:
         return "huggingface"
     if "localhost:11434" in normalized_endpoint or "ollama" in normalized_endpoint:
@@ -731,10 +747,25 @@ def _looks_like_huggingface_reference(line: str, match: re.Match[str]) -> bool:
     return " " not in match.group("name")
 
 
-def _assignment_is_supported(path: Path, assignment: re.Match[str]) -> bool:
+def _assignment_value_is_supported(
+    path: Path,
+    assignment: re.Match[str],
+    model_name: str,
+) -> bool:
+    if not model_name or model_name.lower() in {"false", "none", "null", "true"}:
+        return False
     if path.suffix.lower() != ".py":
+        return _value_looks_like_model_reference(model_name)
+    is_string_literal = '"' in assignment.group(0) or "'" in assignment.group(0)
+    return is_string_literal and _value_looks_like_model_reference(model_name)
+
+
+def _value_looks_like_model_reference(model_name: str) -> bool:
+    if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
         return True
-    return '"' in assignment.group(0) or "'" in assignment.group(0)
+    if _infer_model_source(model_name, None) in {"bedrock", "huggingface"}:
+        return True
+    return ":" in model_name or "-" in model_name
 
 
 def _looks_like_adapter_path(path: Path) -> bool:
