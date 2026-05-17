@@ -62,7 +62,7 @@ def test_discovers_bedrock_model_id_from_env_variant(tmp_path):
     ]
 
 
-def test_model_scan_reports_unapproved_unpinned_and_remote_code(tmp_path):
+def test_model_scan_without_manifest_does_not_require_model_approvals(tmp_path):
     config = tmp_path / "settings.toml"
     config.write_text(
         """
@@ -76,9 +76,25 @@ trust_remote_code = true
 
     assert errors == []
     assert {finding.category for finding in findings} == {MODEL_SUPPLY_CHAIN_CATEGORY}
+    assert not any("not declared as an approved model source" in finding.description for finding in findings)
+    assert not any("without an approved provenance entry" in finding.description for finding in findings)
+    assert any("trust_remote_code" in finding.description for finding in findings)
+
+
+def test_manifest_enables_unapproved_huggingface_reference_findings(tmp_path):
+    config = tmp_path / "settings.toml"
+    config.write_text(
+        'model = "mistralai/Mistral-7B-Instruct-v0.3"',
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "aegislocal.models.toml"
+    manifest.write_text("", encoding="utf-8")
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert errors == []
     assert any("not declared as an approved model source" in finding.description for finding in findings)
     assert any("without an approved provenance entry" in finding.description for finding in findings)
-    assert any("trust_remote_code" in finding.description for finding in findings)
 
 
 def test_approved_pinned_huggingface_reference_has_no_findings(tmp_path):
@@ -142,7 +158,45 @@ def test_local_model_artifacts_report_missing_hash_and_unsafe_formats(tmp_path):
     assert [artifact.path for artifact in artifacts] == [model_file]
     assert errors == []
     assert any("deserialization-prone" in finding.description for finding in findings)
+    assert not any("has no approved SHA256" in finding.description for finding in findings)
+
+
+def test_manifest_enables_local_model_artifact_approval_findings(tmp_path):
+    model_file = tmp_path / "models" / "model.gguf"
+    model_file.parent.mkdir()
+    model_file.write_bytes(b"model bytes")
+    manifest = tmp_path / "aegislocal.models.toml"
+    manifest.write_text("", encoding="utf-8")
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert errors == []
     assert any("has no approved SHA256" in finding.description for finding in findings)
+
+
+def test_adapter_without_manifest_does_not_require_base_model_approval(tmp_path):
+    adapter = tmp_path / "models" / "lora" / "adapter.safetensors"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_bytes(b"adapter")
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert errors == []
+    assert findings == []
+
+
+def test_huggingface_url_prefix_is_normalized(tmp_path):
+    config = tmp_path / "settings.toml"
+    config.write_text(
+        'model_url = "huggingface/mistralai/Mistral-7B-Instruct-v0.3"',
+        encoding="utf-8",
+    )
+
+    references = discover_model_references(tmp_path)
+
+    assert [(reference.name, reference.source) for reference in references] == [
+        ("mistralai/Mistral-7B-Instruct-v0.3", "huggingface")
+    ]
 
 
 def test_manifest_hash_mismatch_is_reported(tmp_path):
@@ -300,7 +354,7 @@ def test_artifact_hashing_error_is_reported_without_crashing(tmp_path, monkeypat
     assert len(inventory.artifacts) == 1
     assert inventory.artifacts[0].sha256 is None
     assert any(error.message == "Unable to hash model artifact" for error in errors)
-    assert any("has no approved SHA256" in finding.description for finding in findings)
+    assert not any("has no approved SHA256" in finding.description for finding in findings)
 
 
 def test_adapter_without_base_model_is_reported(tmp_path):

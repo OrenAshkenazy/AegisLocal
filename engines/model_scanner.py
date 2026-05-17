@@ -279,7 +279,7 @@ def scan_model_supply_chain(
         root,
         target_model=target_model,
         target_endpoint=target_endpoint,
-        include_hashes=True,
+        include_hashes=False,
     )
 
     findings: List[Finding] = []
@@ -430,6 +430,7 @@ def _hf_references_from_line(path: Path, line_number: int, line: str) -> List[Mo
         name = match.group("name").rstrip(".,;)")
         if not _looks_like_huggingface_reference(line, match):
             continue
+        name = _normalize_huggingface_reference_name(name)
         references.append(
             ModelReference(
                 name=name,
@@ -467,7 +468,8 @@ def _findings_for_reference(
 
     findings: List[Finding] = []
     approved_entry = manifest.approved_model(reference.name)
-    if approved_entry is None:
+    provenance_policy_enabled = manifest.path is not None
+    if provenance_policy_enabled and approved_entry is None:
         findings.append(
             Finding(
                 severity=Severity.MEDIUM,
@@ -484,6 +486,7 @@ def _findings_for_reference(
 
     if (
         reference.source == "huggingface"
+        and provenance_policy_enabled
         and approved_entry is None
         and not _is_pinned_revision(reference.revision)
     ):
@@ -534,7 +537,7 @@ def _findings_for_artifact(
             )
         )
 
-    if manifest_entry is None or not manifest_entry.sha256:
+    if manifest.path is not None and (manifest_entry is None or not manifest_entry.sha256):
         actual_hash, hash_error = _artifact_sha256_or_error(
             artifact,
             root,
@@ -557,7 +560,7 @@ def _findings_for_artifact(
         )
 
     if artifact.artifact_type == "adapter":
-        if manifest_entry is None:
+        if manifest.path is not None and manifest_entry is None:
             findings.append(
                 Finding(
                     severity=Severity.MEDIUM,
@@ -570,7 +573,7 @@ def _findings_for_artifact(
                     model_source="local",
                 )
             )
-        elif not manifest_entry.base_model:
+        elif manifest_entry is not None and not manifest_entry.base_model:
             findings.append(
                 Finding(
                     severity=Severity.MEDIUM,
@@ -757,6 +760,14 @@ def _looks_like_huggingface_reference(line: str, match: re.Match[str]) -> bool:
     if "from_pretrained" not in lowered and "huggingface" not in lowered and not MODEL_ASSIGNMENT_RE.search(line):
         return False
     return " " not in match.group("name")
+
+
+def _normalize_huggingface_reference_name(name: str) -> str:
+    if name.startswith("huggingface/"):
+        parts = name.split("/")
+        if len(parts) > 2:
+            return "/".join(parts[1:])
+    return name
 
 
 def _assignment_value_is_supported(

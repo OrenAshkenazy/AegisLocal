@@ -380,20 +380,24 @@ reviewable, not automatically proof of compromise:
 
 | Finding | How to confirm it is expected |
 | --- | --- |
-| Model reference is not declared as approved | Check the reported `source_file` and `source_line`. If the model is intentionally used by the app, add it to `aegislocal.models.toml` with `source`, `license`, and `approved = true`. If the file is a sample, test fixture, or stale config, remove it or exclude it from the scanned project root. |
-| Hugging Face model reference has no approved provenance entry | For official model releases, confirm the publisher, model card, license, and Hugging Face security scan status, then approve the release in `aegislocal.models.toml`. A commit `revision` is optional and useful for strict reproducibility, but it is not required to approve a stable official release such as `mistralai/Mistral-7B-Instruct-v0.3`. |
-| `trust_remote_code = true` | Confirm the model repo code is required and reviewed because this setting allows repository code to run locally. If it is not required, set it to `false`. If it is required, approve the model in `aegislocal.models.toml`; use an exact commit revision when you need stronger reproducibility. |
-| Local model artifact has no approved SHA256 | Compute the local file digest with `shasum -a 256 path/to/model`, verify the file came from the intended source, then add `path`, `sha256`, `source`, `license`, and `approved = true` to `aegislocal.models.toml`. |
+| Model reference is not declared as approved | This appears only when `aegislocal.models.toml` exists, which means the project opted into approval-policy checks. Check the reported `source_file` and `source_line`. If the model is intentionally used by the app, add it to the manifest with `source`, `license`, and `approved = true`. If the file is a sample, test fixture, or stale config, remove it or exclude it from the scanned project root. |
+| Hugging Face model reference has no approved provenance entry | This appears only when `aegislocal.models.toml` exists. For official model releases, confirm the publisher, model card, license, and Hugging Face security scan status, then approve the release in the manifest. A commit `revision` is optional and useful for strict reproducibility, but it is not required to approve a stable official release such as `mistralai/Mistral-7B-Instruct-v0.3`. |
+| `trust_remote_code = true` | Confirm the model repo code is required and reviewed because this setting allows repository code to run locally. If it is not required, set it to `false`. If it is required, document the approval in your review process or in `aegislocal.models.toml`; use an exact commit revision when you need stronger reproducibility. |
+| Local model artifact has no approved SHA256 | This appears only when `aegislocal.models.toml` exists. Compute the local file digest with `shasum -a 256 path/to/model`, verify the file came from the intended source, then add `path`, `sha256`, `source`, `license`, and `approved = true` to the manifest. |
 | Local artifact uses `.bin`, `.pt`, `.pth`, or `.ckpt` | Confirm the loader and source are trusted. These formats are flagged because they are commonly pickle/deserialization-based. Prefer `.safetensors` or `.gguf` when possible. If you must use one of these formats, keep it pinned by SHA256 and treat it as a manually accepted risk. |
 | LoRA/adapter artifact has no declared base model | Confirm which base model the adapter was trained for. Add `base_model = "..."` to the `[[adapters]]` entry. If the adapter is stale or experimental, remove it from the scanned project root. |
 | Local artifact SHA256 does not match the approved manifest entry | Recompute the digest with `shasum -a 256 path/to/model`. If the file changed unexpectedly, restore the reviewed artifact. If the change was intentional, review the new artifact and update the manifest SHA only after approval. |
 | Manifest entry `path` is missing from disk | Check whether the artifact was moved, deleted, or not checked out. Restore the file at the declared path, update the manifest path, or remove the stale manifest entry. |
 
-To approve known models and reduce expected findings, add
-`aegislocal.models.toml` at the project root you pass to `--project-root`.
-This file is an AegisLocal approval manifest, not an industry standard by
-itself. AegisLocal uses it as local policy input, then writes model inventory to
-CycloneDX AIBOM output.
+`aegislocal.models.toml` is optional for `scan`. If the file is absent,
+AegisLocal still discovers models and reports concrete risks such as
+`trust_remote_code` and unsafe local formats, but it does not fail every
+discovered model for lacking local approval.
+
+Add `aegislocal.models.toml` only when you want AegisLocal to enforce a local
+approval policy for model references and artifacts. This file is an AegisLocal
+approval manifest, not an industry standard by itself. AegisLocal uses it as
+local policy input, then writes model inventory to CycloneDX AIBOM output.
 
 Use it when your application relies on a Hugging Face model, a local model file,
 or a LoRA/adapter that should be treated as approved. For local files, record
