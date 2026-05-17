@@ -380,9 +380,9 @@ reviewable, not automatically proof of compromise:
 
 | Finding | How to confirm it is expected |
 | --- | --- |
-| Model reference is not declared as approved | Check the reported `source_file` and `source_line`. If the model is intentionally used by the app, add it to `aegislocal.models.toml` with `source`, `license`, a pinned `revision` or `sha256` where applicable, and `approved = true`. If the file is a sample, test fixture, or stale config, remove it or exclude it from the scanned project root. |
-| Hugging Face model reference has no immutable commit revision | Open the model page or inspect the model repo and choose the exact commit SHA you reviewed. Use `owner/model@<40-char-commit-sha>` in config/code or add `revision = "<40-char-commit-sha>"` to the approved manifest entry. Branch names, tags, and latest/default references can move, so they remain findings. |
-| `trust_remote_code = true` | Confirm the exact model repo and commit are reviewed because this setting allows model repository code to run locally. If it is not required, set it to `false`. If it is required, pin the model to an immutable commit, review the repo code, and document the approval in `aegislocal.models.toml`. |
+| Model reference is not declared as approved | Check the reported `source_file` and `source_line`. If the model is intentionally used by the app, add it to `aegislocal.models.toml` with `source`, `license`, and `approved = true`. If the file is a sample, test fixture, or stale config, remove it or exclude it from the scanned project root. |
+| Hugging Face model reference has no approved provenance entry | For official model releases, confirm the publisher, model card, license, and Hugging Face security scan status, then approve the release in `aegislocal.models.toml`. A commit `revision` is optional and useful for strict reproducibility, but it is not required to approve a stable official release such as `mistralai/Mistral-7B-Instruct-v0.3`. |
+| `trust_remote_code = true` | Confirm the model repo code is required and reviewed because this setting allows repository code to run locally. If it is not required, set it to `false`. If it is required, approve the model in `aegislocal.models.toml`; use an exact commit revision when you need stronger reproducibility. |
 | Local model artifact has no approved SHA256 | Compute the local file digest with `shasum -a 256 path/to/model`, verify the file came from the intended source, then add `path`, `sha256`, `source`, `license`, and `approved = true` to `aegislocal.models.toml`. |
 | Local artifact uses `.bin`, `.pt`, `.pth`, or `.ckpt` | Confirm the loader and source are trusted. These formats are flagged because they are commonly pickle/deserialization-based. Prefer `.safetensors` or `.gguf` when possible. If you must use one of these formats, keep it pinned by SHA256 and treat it as a manually accepted risk. |
 | LoRA/adapter artifact has no declared base model | Confirm which base model the adapter was trained for. Add `base_model = "..."` to the `[[adapters]]` entry. If the adapter is stale or experimental, remove it from the scanned project root. |
@@ -391,6 +391,9 @@ reviewable, not automatically proof of compromise:
 
 To approve known models and reduce expected findings, add
 `aegislocal.models.toml` at the project root you pass to `--project-root`.
+This file is an AegisLocal approval manifest, not an industry standard by
+itself. AegisLocal uses it as local policy input, then writes model inventory to
+CycloneDX AIBOM output.
 
 Use it when your application relies on a Hugging Face model, a local model file,
 or a LoRA/adapter that should be treated as approved. For local files, record

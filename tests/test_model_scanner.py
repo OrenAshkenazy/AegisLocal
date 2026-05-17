@@ -77,7 +77,7 @@ trust_remote_code = true
     assert errors == []
     assert {finding.category for finding in findings} == {MODEL_SUPPLY_CHAIN_CATEGORY}
     assert any("not declared as an approved model source" in finding.description for finding in findings)
-    assert any("without an immutable revision" in finding.description for finding in findings)
+    assert any("without an approved provenance entry" in finding.description for finding in findings)
     assert any("trust_remote_code" in finding.description for finding in findings)
 
 
@@ -95,6 +95,30 @@ def test_approved_pinned_huggingface_reference_has_no_findings(tmp_path):
 name = "mistralai/Mistral-7B-Instruct-v0.3"
 source = "huggingface"
 revision = "{revision}"
+license = "apache-2.0"
+approved = true
+""",
+        encoding="utf-8",
+    )
+
+    findings, errors = scan_model_supply_chain(tmp_path)
+
+    assert errors == []
+    assert findings == []
+
+
+def test_approved_huggingface_release_without_commit_revision_has_no_findings(tmp_path):
+    config = tmp_path / "settings.toml"
+    config.write_text(
+        'model = "mistralai/Mistral-7B-Instruct-v0.3"',
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "aegislocal.models.toml"
+    manifest.write_text(
+        """
+[[models]]
+name = "mistralai/Mistral-7B-Instruct-v0.3"
+source = "huggingface"
 license = "apache-2.0"
 approved = true
 """,

@@ -452,7 +452,11 @@ def _findings_for_reference(
                 severity=Severity.HIGH,
                 category=MODEL_SUPPLY_CHAIN_CATEGORY,
                 description="Model loading enables trust_remote_code, allowing repository-supplied code to execute.",
-                remediation="Disable trust_remote_code unless the model repository is reviewed, pinned to an immutable revision, and explicitly approved.",
+                remediation=(
+                    "Disable trust_remote_code unless the model repository code is "
+                    "reviewed and explicitly approved. Use an exact commit revision "
+                    "when you need stronger reproducibility."
+                ),
                 source_file=_source_file_text(reference),
                 source_line=reference.line_number,
                 artifact_type="remote_code",
@@ -478,13 +482,21 @@ def _findings_for_reference(
             )
         )
 
-    if reference.source == "huggingface" and not _is_pinned_revision(reference.revision):
+    if (
+        reference.source == "huggingface"
+        and approved_entry is None
+        and not _is_pinned_revision(reference.revision)
+    ):
         findings.append(
             Finding(
                 severity=Severity.MEDIUM,
                 category=MODEL_SUPPLY_CHAIN_CATEGORY,
-                description=f"Hugging Face model '{reference.name}' is referenced without an immutable revision.",
-                remediation="Pin Hugging Face models to a commit SHA, for example owner/model@<40-char-commit-sha>.",
+                description=f"Hugging Face model '{reference.name}' is referenced without an approved provenance entry.",
+                remediation=(
+                    f"If this is an expected Hugging Face release, add '{reference.name}' "
+                    f"to {MODEL_MANIFEST_NAME} with source, license, and approved = true. "
+                    "For stricter reproducibility, also record an exact commit revision."
+                ),
                 source_file=_source_file_text(reference),
                 source_line=reference.line_number,
                 artifact_type=reference.artifact_type,
