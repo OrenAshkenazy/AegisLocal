@@ -59,38 +59,78 @@ uv run python main.py --help
 
 ## Running a Scan
 
-Basic scan:
+A scan combines three checks:
+
+- Python dependency supply-chain scanning
+- model provenance scanning for model names, local model files, and adapters
+- dynamic red-team prompts against a target model endpoint
+
+Scan the current directory with the default local Ollama-compatible endpoint:
 
 ```bash
 uv run python main.py scan
 ```
 
-This scans the current directory, loads payloads from `data/payloads.json`, and
-uses the default local Ollama-compatible chat completions endpoint.
+By default, this uses:
 
-Example with explicit models:
+- project root: `.`
+- target endpoint: `http://localhost:11434/v1/chat/completions`
+- target model: `llama3.1:8b`
+- judge endpoint: `http://localhost:11434/v1/chat/completions`
+- judge model: `llama3.1:8b`
+- payload file: `data/payloads.json`
+
+Scan another project:
+
+```bash
+uv run python main.py scan --project-root ~/dev/project
+```
+
+Use explicit target and judge models:
 
 ```bash
 uv run python main.py scan \
+  --project-root ~/dev/project \
   --target-model llama3.1:8b \
   --judge-model llama3.1:8b
 ```
 
-Example with a fallback judge model:
+Use a different target endpoint:
 
 ```bash
 uv run python main.py scan \
+  --project-root ~/dev/project \
+  --target-endpoint http://localhost:11434/v1/chat/completions \
+  --target-model llama3.1:8b \
+  --judge-endpoint http://localhost:11434/v1/chat/completions \
+  --judge-model llama3.1:8b
+```
+
+Add a fallback judge model when the primary judge is unreliable:
+
+```bash
+uv run python main.py scan \
+  --project-root ~/dev/project \
   --target-model llama3.1:8b \
   --judge-model llama3.1:8b \
   --fallback-judge-model llama3.2:1b
 ```
 
-Example with slower local hardware:
+Use conservative settings for slower local hardware:
 
 ```bash
 uv run python main.py scan \
+  --project-root ~/dev/project \
   --target-timeout 60 \
   --dynamic-concurrency 1
+```
+
+Write the JSON report to a file as well as stdout:
+
+```bash
+uv run python main.py scan \
+  --project-root ~/dev/project \
+  --output-file aegislocal-report.json
 ```
 
 ## Ollama Example
@@ -119,6 +159,8 @@ ollama pull llama3.2:1b
 
 ## CLI Options
 
+Common `scan` options:
+
 ```text
 --project-root PATH              Project root to recursively scan.
 --payload-file PATH              Dynamic payload JSON file.
@@ -132,6 +174,9 @@ ollama pull llama3.2:1b
 --fallback-judge-model TEXT      Optional fallback judge model.
 --include-evidence               Include sanitized evidence for failed or
                                   unknown dynamic payloads.
+--output-file PATH               Write the JSON scan report to a file.
+--quiet                          Suppress terminal UI. JSON report only.
+--verbose                        Show per-item status lines during scan.
 ```
 
 ## Report Semantics
@@ -339,8 +384,20 @@ The scanner reports risks such as:
 - deserialization-prone model formats such as `.bin`, `.pt`, `.pth`, and `.ckpt`
 - LoRA/adapter artifacts without a declared base model
 - local artifacts whose SHA256 no longer matches the approved manifest entry
+- manifest entries whose local `path` is missing from disk
 
-Approved model provenance can be declared in `aegislocal.models.toml`:
+To approve known models and reduce expected findings, add
+`aegislocal.models.toml` at the project root you pass to `--project-root`.
+
+Use it when your application relies on a Hugging Face model, a local model file,
+or a LoRA/adapter that should be treated as approved. For local files, record
+the SHA256 so AegisLocal can detect later changes:
+
+```bash
+shasum -a 256 models/local-model.gguf
+```
+
+Example `aegislocal.models.toml`:
 
 ```toml
 [[models]]
@@ -370,7 +427,8 @@ approved = true
 ## SBOM/AIBOM Output
 
 AegisLocal can write separate CycloneDX JSON inventories for software packages
-and AI/model assets:
+and AI/model assets. Use `bom` when you want inventory only, without dynamic
+model testing or OSV vulnerability lookups:
 
 ```bash
 uv run python main.py bom --project-root ~/dev/project --output bom.cdx.json
@@ -412,6 +470,9 @@ inventory:
 ```bash
 uv run python main.py bom --project-root ~/dev/project --output bom.cdx.json --strict
 ```
+
+Use `scan` when you want security findings. Use `bom` when you want an
+inventory artifact for CI, audit, or handoff to another tool.
 
 ## Development
 
