@@ -373,7 +373,7 @@ AegisLocal can write separate CycloneDX JSON inventories for software packages
 and AI/model assets:
 
 ```bash
-uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json
+uv run python main.py bom --project-root ~/dev/project --output bom.cdx.json
 ```
 
 This writes:
@@ -399,7 +399,7 @@ include a runtime model that is not present in local config, pass it explicitly:
 
 ```bash
 uv run python main.py bom \
-  --project-root ~/dev/familia-ai \
+  --project-root ~/dev/project \
   --target-model llama3.1:8b \
   --target-endpoint http://localhost:11434/v1/chat/completions \
   --output bom.cdx.json
@@ -410,7 +410,7 @@ not fail `bom` by default. Use `--strict` when CI should fail on incomplete
 inventory:
 
 ```bash
-uv run python main.py bom --project-root ~/dev/familia-ai --output bom.cdx.json --strict
+uv run python main.py bom --project-root ~/dev/project --output bom.cdx.json --strict
 ```
 
 ## Development
