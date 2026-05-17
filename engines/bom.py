@@ -25,7 +25,6 @@ from engines.model_scanner import (
     collect_model_inventory,
     _normalize_configured_path,
     _normalize_manifest_path,
-    _sha256_file,
 )
 from engines.static_scanner import Dependency
 
@@ -471,7 +470,6 @@ def _model_artifact_component(
 ) -> dict:
     manifest_entry = manifest.artifact_entry(artifact.path, root)
     relative_path = _normalize_manifest_path(artifact.path, root)
-    digest = artifact.sha256 or _sha256_file(artifact.path)
     properties = [
         _property("aegislocal:artifact-type", artifact.artifact_type),
         _property("aegislocal:model-source", "local"),
@@ -484,14 +482,16 @@ def _model_artifact_component(
     if manifest_entry and manifest_entry.license:
         properties.append(_property("aegislocal:license", manifest_entry.license))
 
-    return {
+    component = {
         "type": "machine-learning-model",
         "bom-ref": f"model:local/{quote(relative_path)}",
         "name": manifest_entry.name if manifest_entry else artifact.name,
-        "version": digest,
-        "hashes": [{"alg": "SHA-256", "content": digest}],
+        "version": artifact.sha256 or UNRESOLVED_VERSION,
         "properties": properties,
     }
+    if artifact.sha256:
+        component["hashes"] = [{"alg": "SHA-256", "content": artifact.sha256}]
+    return component
 
 
 def _manifest_entry_component(

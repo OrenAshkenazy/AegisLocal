@@ -10,6 +10,7 @@ from engines.model_scanner import (
     ModelInventory,
     ModelManifest,
     ModelManifestEntry,
+    collect_model_inventory,
     discover_model_artifacts,
     discover_model_references,
     load_model_manifest,
@@ -233,6 +234,25 @@ approved = true
     assert len(errors) == 1
     assert errors[0].message == "Unable to hash manifest model artifact"
     assert errors[0].path == str(model_dir)
+
+
+def test_artifact_hashing_error_is_reported_without_crashing(tmp_path, monkeypatch):
+    model_file = tmp_path / "models" / "model.gguf"
+    model_file.parent.mkdir()
+    model_file.write_bytes(b"model")
+
+    def fake_sha256_file(path):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(model_scanner, "_sha256_file", fake_sha256_file)
+
+    inventory = collect_model_inventory(tmp_path, include_hashes=True)
+    findings, errors = scan_model_supply_chain(tmp_path, inventory=inventory)
+
+    assert len(inventory.artifacts) == 1
+    assert inventory.artifacts[0].sha256 is None
+    assert any(error.message == "Unable to hash model artifact" for error in errors)
+    assert any("has no approved SHA256" in finding.description for finding in findings)
 
 
 def test_adapter_without_base_model_is_reported(tmp_path):

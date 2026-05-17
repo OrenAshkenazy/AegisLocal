@@ -4,7 +4,6 @@
 import hashlib
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Tuple
@@ -122,12 +121,7 @@ class ModelInventory:
     manifest_errors: Tuple[ExecutionError, ...]
     references: Tuple[ModelReference, ...]
     artifacts: Tuple[ModelArtifact, ...]
-
-
-def _warn(error: ExecutionError) -> None:
-    location = f" ({error.path})" if error.path else ""
-    detail = f": {error.detail}" if error.detail else ""
-    print(f"[{error.source.value}] {error.message}{location}{detail}", file=sys.stderr)
+    artifact_errors: Tuple[ExecutionError, ...] = ()
 
 
 def _is_excluded_path(path: Path, root: Path) -> bool:
@@ -135,9 +129,7 @@ def _is_excluded_path(path: Path, root: Path) -> bool:
         relative_parts = path.relative_to(root).parts
     except ValueError:
         return False
-    if any(part in EXCLUDED_DIR_NAMES for part in relative_parts):
-        return True
-    return len(relative_parts) >= 2 and relative_parts[:2] == ("tests", "fixtures")
+    return any(part in EXCLUDED_DIR_NAMES for part in relative_parts)
 
 
 def load_model_manifest(project_root: Path) -> Tuple[ModelManifest, List[ExecutionError]]:
@@ -155,7 +147,6 @@ def load_model_manifest(project_root: Path) -> Tuple[ModelManifest, List[Executi
             path=str(manifest_path),
             detail=str(exc),
         )
-        _warn(error)
         return ModelManifest(path=manifest_path, models=(), adapters=()), [error]
 
     return (
@@ -215,7 +206,8 @@ def discover_model_references(
             )
         )
 
-    for path in _iter_text_scan_files(root):
+    text_paths, _ = _iter_model_scan_files(root)
+    for path in text_paths:
         references.extend(_references_from_file(path))
 
     return _dedupe_model_references(references)
@@ -225,37 +217,15 @@ def discover_model_artifacts(
     project_root: Path,
     *,
     include_hashes: bool = False,
+    errors: Optional[List[ExecutionError]] = None,
 ) -> List[ModelArtifact]:
     root = project_root.resolve()
-    artifacts: List[ModelArtifact] = []
-    if not root.exists():
-        return artifacts
-
-    for current_root_text, dirnames, filenames in os.walk(root):
-        current_root = Path(current_root_text)
-        dirnames[:] = [
-            dirname
-            for dirname in dirnames
-            if not _is_excluded_path(current_root / dirname, root)
-        ]
-        if _is_excluded_path(current_root, root):
-            continue
-        for filename in filenames:
-            path = current_root / filename
-            suffix = path.suffix.lower()
-            if suffix not in MODEL_FILE_SUFFIXES:
-                continue
-            artifact_type = "adapter" if _looks_like_adapter_path(path) else "model"
-            artifacts.append(
-                ModelArtifact(
-                    name=path.name,
-                    path=path,
-                    artifact_type=artifact_type,
-                    format=suffix.lstrip("."),
-                    sha256=_sha256_file(path) if include_hashes else None,
-                )
-            )
-    return sorted(artifacts, key=lambda artifact: str(artifact.path))
+    _, artifact_paths = _iter_model_scan_files(root)
+    return _model_artifacts_from_paths(
+        artifact_paths,
+        include_hashes=include_hashes,
+        errors=errors,
+    )
 
 
 def collect_model_inventory(
@@ -267,16 +237,30 @@ def collect_model_inventory(
 ) -> ModelInventory:
     root = project_root.resolve()
     manifest, errors = load_model_manifest(root)
-    references = discover_model_references(
-        root,
-        target_model=target_model,
-        target_endpoint=target_endpoint,
+    artifact_errors: List[ExecutionError] = []
+    text_paths, artifact_paths = _iter_model_scan_files(root)
+    references: List[ModelReference] = []
+    if target_model:
+        references.append(
+            ModelReference(
+                name=target_model,
+                source=_infer_model_source(target_model, target_endpoint),
+                source_file=None,
+                line_number=None,
+            )
+        )
+    for path in text_paths:
+        references.extend(_references_from_file(path))
+    artifacts = _model_artifacts_from_paths(
+        artifact_paths,
+        include_hashes=include_hashes,
+        errors=artifact_errors,
     )
-    artifacts = discover_model_artifacts(root, include_hashes=include_hashes)
     return ModelInventory(
         manifest=manifest,
         manifest_errors=tuple(errors),
-        references=tuple(references),
+        artifact_errors=tuple(artifact_errors),
+        references=tuple(_dedupe_model_references(references)),
         artifacts=tuple(artifacts),
     )
 
@@ -323,14 +307,24 @@ def scan_model_supply_chain(
     )
     findings.extend(manifest_findings)
     hash_errors.extend(manifest_hash_errors)
-    return _dedupe_findings(findings), [*inventory.manifest_errors, *hash_errors]
+    return _dedupe_findings(findings), [
+        *inventory.manifest_errors,
+        *inventory.artifact_errors,
+        *hash_errors,
+    ]
 
 
 def _iter_text_scan_files(root: Path) -> Iterable[Path]:
-    if not root.exists():
-        return []
+    text_paths, _ = _iter_model_scan_files(root)
+    return text_paths
 
-    paths: List[Path] = []
+
+def _iter_model_scan_files(root: Path) -> Tuple[List[Path], List[Path]]:
+    if not root.exists():
+        return [], []
+
+    text_paths: List[Path] = []
+    artifact_paths: List[Path] = []
     for current_root_text, dirnames, filenames in os.walk(root):
         current_root = Path(current_root_text)
         dirnames[:] = [
@@ -342,11 +336,41 @@ def _iter_text_scan_files(root: Path) -> Iterable[Path]:
             continue
         for filename in filenames:
             path = current_root / filename
-            if path.name == MODEL_MANIFEST_NAME:
-                continue
-            if _is_text_scan_file(path):
-                paths.append(path)
-    return sorted(paths)
+            if path.suffix.lower() in MODEL_FILE_SUFFIXES:
+                artifact_paths.append(path)
+            if path.name != MODEL_MANIFEST_NAME and _is_text_scan_file(path):
+                text_paths.append(path)
+    return sorted(text_paths), sorted(artifact_paths)
+
+
+def _model_artifacts_from_paths(
+    artifact_paths: Iterable[Path],
+    *,
+    include_hashes: bool,
+    errors: Optional[List[ExecutionError]],
+) -> List[ModelArtifact]:
+    artifacts: List[ModelArtifact] = []
+    for path in artifact_paths:
+        suffix = path.suffix.lower()
+        artifact_type = "adapter" if _looks_like_adapter_path(path) else "model"
+        artifact_hash: Optional[str] = None
+        if include_hashes:
+            artifact_hash, hash_error = _sha256_file_or_error(
+                path,
+                "Unable to hash model artifact",
+            )
+            if hash_error and errors is not None:
+                errors.append(hash_error)
+        artifacts.append(
+            ModelArtifact(
+                name=path.name,
+                path=path,
+                artifact_type=artifact_type,
+                format=suffix.lstrip("."),
+                sha256=artifact_hash,
+            )
+        )
+    return artifacts
 
 
 def _references_from_file(path: Path) -> List[ModelReference]:

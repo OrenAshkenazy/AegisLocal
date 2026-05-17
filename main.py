@@ -138,7 +138,8 @@ async def run_scan(
             dependencies=deps,
             initial_errors=dep_errors,
         )
-    model_inventory = collect_model_inventory(
+    model_inventory = await asyncio.to_thread(
+        collect_model_inventory,
         project_root,
         target_model=target_model,
         target_endpoint=target_endpoint,
@@ -353,7 +354,11 @@ def bom_command(
     write_cyclonedx_bom(sbom_output_file, sbom)
     write_cyclonedx_bom(aibom_output_file, aibom)
 
-    execution_errors = [*dep_errors, *model_inventory.manifest_errors]
+    execution_errors = [
+        *dep_errors,
+        *model_inventory.manifest_errors,
+        *model_inventory.artifact_errors,
+    ]
     if execution_errors:
         typer.echo(
             "Wrote BOMs with "
