@@ -122,6 +122,7 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    static_only: bool,
     console: ScanConsole,
 ) -> ScanReport:
     start = time.monotonic()
@@ -129,7 +130,10 @@ async def run_scan(
     # Parse once, pass to engines to avoid redundant I/O
     manifest_files = discover_manifest_files(project_root)
     deps, dep_errors = parse_manifest_files(manifest_files)
-    payloads, payload_errors = load_payloads(payload_file)
+    payloads = []
+    payload_errors = []
+    if not static_only:
+        payloads, payload_errors = load_payloads(payload_file)
 
     with console.static_progress(len(deps)) as static_cb:
         static_findings, static_errors = await run_static_scan(
@@ -150,22 +154,26 @@ async def run_scan(
         inventory=model_inventory,
     )
 
-    with console.dynamic_progress(len(payloads)) as dynamic_cb:
-        dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
-            payload_file=payload_file,
-            target_endpoint=target_endpoint,
-            target_model=target_model,
-            judge_endpoint=judge_endpoint,
-            judge_model=judge_model,
-            fallback_judge_endpoint=fallback_judge_endpoint,
-            fallback_judge_model=fallback_judge_model,
-            target_timeout_seconds=target_timeout_seconds,
-            dynamic_concurrency=dynamic_concurrency,
-            include_evidence=include_evidence,
-            on_progress=dynamic_cb,
-            payloads=payloads,
-            initial_errors=payload_errors,
-        )
+    dynamic_findings = []
+    dynamic_errors = []
+    dynamic_evidence = []
+    if not static_only:
+        with console.dynamic_progress(len(payloads)) as dynamic_cb:
+            dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
+                payload_file=payload_file,
+                target_endpoint=target_endpoint,
+                target_model=target_model,
+                judge_endpoint=judge_endpoint,
+                judge_model=judge_model,
+                fallback_judge_endpoint=fallback_judge_endpoint,
+                fallback_judge_model=fallback_judge_model,
+                target_timeout_seconds=target_timeout_seconds,
+                dynamic_concurrency=dynamic_concurrency,
+                include_evidence=include_evidence,
+                on_progress=dynamic_cb,
+                payloads=payloads,
+                initial_errors=payload_errors,
+            )
 
     duration = time.monotonic() - start
 
@@ -247,6 +255,11 @@ def scan(
         "--include-evidence",
         help="Include sanitized target response excerpts for failed or unknown dynamic payloads.",
     ),
+    static_only: bool = typer.Option(
+        False,
+        "--static-only",
+        help="Run dependency and model provenance checks only; skip dynamic payloads.",
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -285,6 +298,7 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            static_only=static_only,
             console=console,
         )
     )

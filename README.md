@@ -65,6 +65,13 @@ A scan combines three checks:
 - model provenance scanning for model names, local model files, and adapters
 - dynamic red-team prompts against a target model endpoint
 
+Use `--static-only` when you want dependency and model provenance findings
+without running dynamic LLM prompts or requiring a local model server:
+
+```bash
+uv run python main.py scan --project-root ~/dev/project --static-only
+```
+
 Scan the current directory with the default local Ollama-compatible endpoint:
 
 ```bash
@@ -174,6 +181,7 @@ Common `scan` options:
 --fallback-judge-model TEXT      Optional fallback judge model.
 --include-evidence               Include sanitized evidence for failed or
                                   unknown dynamic payloads.
+--static-only                    Skip dynamic payloads and run static checks only.
 --output-file PATH               Write the JSON scan report to a file.
 --quiet                          Suppress terminal UI. JSON report only.
 --verbose                        Show per-item status lines during scan.
