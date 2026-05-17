@@ -662,6 +662,8 @@ def _infer_model_source(model_name: str, endpoint: Optional[str]) -> str:
         return "local"
     if "bedrock" in normalized_endpoint or _looks_like_bedrock_model_id(model_name):
         return "bedrock"
+    if Path(model_name).suffix.lower() in MODEL_FILE_SUFFIXES:
+        return "local"
     if "/" in model_name:
         return "huggingface"
     if "localhost:11434" in normalized_endpoint or "ollama" in normalized_endpoint:
