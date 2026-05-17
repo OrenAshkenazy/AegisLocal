@@ -375,16 +375,19 @@ local model artifacts with extensions such as `.gguf`, `.safetensors`, `.bin`,
 Model supply-chain findings are reported under `static_findings` with category
 `Model Supply Chain`.
 
-The scanner reports risks such as:
+The scanner reports risks such as the following. Each finding is meant to be
+reviewable, not automatically proof of compromise:
 
-- model references that are not declared as approved
-- Hugging Face model references without an immutable commit revision
-- `trust_remote_code = true`
-- local model artifacts without an approved SHA256
-- deserialization-prone model formats such as `.bin`, `.pt`, `.pth`, and `.ckpt`
-- LoRA/adapter artifacts without a declared base model
-- local artifacts whose SHA256 no longer matches the approved manifest entry
-- manifest entries whose local `path` is missing from disk
+| Finding | How to confirm it is expected |
+| --- | --- |
+| Model reference is not declared as approved | Check the reported `source_file` and `source_line`. If the model is intentionally used by the app, add it to `aegislocal.models.toml` with `source`, `license`, a pinned `revision` or `sha256` where applicable, and `approved = true`. If the file is a sample, test fixture, or stale config, remove it or exclude it from the scanned project root. |
+| Hugging Face model reference has no immutable commit revision | Open the model page or inspect the model repo and choose the exact commit SHA you reviewed. Use `owner/model@<40-char-commit-sha>` in config/code or add `revision = "<40-char-commit-sha>"` to the approved manifest entry. Branch names, tags, and latest/default references can move, so they remain findings. |
+| `trust_remote_code = true` | Confirm the exact model repo and commit are reviewed because this setting allows model repository code to run locally. If it is not required, set it to `false`. If it is required, pin the model to an immutable commit, review the repo code, and document the approval in `aegislocal.models.toml`. |
+| Local model artifact has no approved SHA256 | Compute the local file digest with `shasum -a 256 path/to/model`, verify the file came from the intended source, then add `path`, `sha256`, `source`, `license`, and `approved = true` to `aegislocal.models.toml`. |
+| Local artifact uses `.bin`, `.pt`, `.pth`, or `.ckpt` | Confirm the loader and source are trusted. These formats are flagged because they are commonly pickle/deserialization-based. Prefer `.safetensors` or `.gguf` when possible. If you must use one of these formats, keep it pinned by SHA256 and treat it as a manually accepted risk. |
+| LoRA/adapter artifact has no declared base model | Confirm which base model the adapter was trained for. Add `base_model = "..."` to the `[[adapters]]` entry. If the adapter is stale or experimental, remove it from the scanned project root. |
+| Local artifact SHA256 does not match the approved manifest entry | Recompute the digest with `shasum -a 256 path/to/model`. If the file changed unexpectedly, restore the reviewed artifact. If the change was intentional, review the new artifact and update the manifest SHA only after approval. |
+| Manifest entry `path` is missing from disk | Check whether the artifact was moved, deleted, or not checked out. Restore the file at the declared path, update the manifest path, or remove the stale manifest entry. |
 
 To approve known models and reduce expected findings, add
 `aegislocal.models.toml` at the project root you pass to `--project-root`.
