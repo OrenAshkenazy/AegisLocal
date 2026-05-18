@@ -94,6 +94,15 @@ class ScanConsole:
         lines.append(f"\nDuration: {report.scan_duration_seconds:.1f}s")
         lines.append(f"\nStatic findings: {len(report.static_findings)}")
         lines.append(f"\nDynamic findings: {len(report.dynamic_findings)}")
+        if report.license_coverage is not None:
+            coverage = report.license_coverage
+            lines.append(
+                "\nLicense metadata: "
+                f"{coverage.dependencies_with_license_metadata}/"
+                f"{coverage.dependencies_total} dependencies, "
+                f"{coverage.models_with_license_metadata}/"
+                f"{coverage.models_total} models"
+            )
         lines.append(f"\nExecution errors: {len(report.execution_errors)}")
         lines.append(f"\nVersion: {report.scanner_version}")
 

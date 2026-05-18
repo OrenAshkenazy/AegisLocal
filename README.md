@@ -132,6 +132,12 @@ ollama pull llama3.2:1b
 --fallback-judge-model TEXT      Optional fallback judge model.
 --include-evidence               Include sanitized evidence for failed or
                                   unknown dynamic payloads.
+--license-scan / --no-license-scan
+                                  Run License Policy Review using local
+                                  SBOM/AIBOM/cache metadata.
+--sbom PATH                      CycloneDX SBOM JSON with dependency licenses.
+--aibom PATH                     CycloneDX-style AIBOM JSON with model licenses.
+--license-cache PATH             Local license metadata cache JSON.
 ```
 
 ## Report Semantics
@@ -140,14 +146,17 @@ AegisLocal separates confirmed security outcomes from scan reliability:
 
 - `security_result`: `PASS`, `FAIL`, or `UNKNOWN`
 - `execution_status`: `COMPLETE` or `SCAN_INCOMPLETE`
-- `passed_audit`: `true` only when the scan completed and no findings were
-  found
+- `passed_audit`: `true` only when the scan completed without failing findings
 
 Execution errors are printed to stderr while the scan runs and are also included
 in the JSON report under `execution_errors`.
 
 Dynamic findings are grouped by category and include counts plus payload IDs.
 Raw model responses are not included by default.
+
+Static findings include an `action` field. Dependency vulnerabilities use
+`FAIL`; License Policy Review findings use `WARN`, so warning-only license
+results do not fail the audit by default.
 
 For debugging, use `--include-evidence` to include sanitized, truncated prompt
 and target response excerpts for failed or unknown dynamic payloads:
@@ -182,6 +191,9 @@ Example incomplete report fields:
 - `0`: scan completed and passed
 - nonzero: confirmed findings, incomplete scan, or validation/configuration
   failure
+
+License Policy Review warnings alone keep exit code `0`. They are policy-review
+signals, not vulnerability failures.
 
 This makes the scanner suitable for CI gates while avoiding confusion between
 security failures and infrastructure problems.
@@ -318,6 +330,61 @@ remediation points the user to advisory-level mitigation or workaround guidance.
 Unsupported requirement or `pyproject.toml` dependency specs are reported as
 execution errors but do not stop the scan. Blank lines, full-line comments, and
 inline comments are ignored safely.
+
+## License Policy Review
+
+License Policy Review checks dependency and model license metadata from local
+evidence sources only. It does not perform one network lookup per package or
+model during the normal scan.
+
+Run it with local SBOM/AIBOM/cache inputs:
+
+```bash
+uv run python main.py scan \
+  --license-scan \
+  --sbom bom.sbom.cdx.json \
+  --aibom bom.aibom.cdx.json \
+  --license-cache .aegislocal/license-metadata-cache.json
+```
+
+The review currently warns on GPL-family licenses:
+
+- `GPL-*`
+- `AGPL-*`
+- `LGPL-*`
+
+These are `MEDIUM` `WARN` findings. They mean the dependency or model may need
+review against your organization's policy; they do not mean the item is
+malicious, vulnerable, or illegal to use.
+
+The report includes license metadata coverage when `--license-scan` is enabled:
+
+```json
+{
+  "license_coverage": {
+    "dependencies_total": 42,
+    "dependencies_with_license_metadata": 31,
+    "dependencies_missing_license_metadata": 11,
+    "models_total": 2,
+    "models_with_license_metadata": 1,
+    "models_missing_license_metadata": 1
+  }
+}
+```
+
+Source precedence is deterministic:
+
+1. SBOM for dependency licenses.
+2. AIBOM for model licenses.
+3. `.aegislocal/license-metadata-cache.json` or `--license-cache`.
+
+If SBOM/AIBOM metadata conflicts with cache metadata, SBOM/AIBOM wins. If two
+same-priority sources conflict, AegisLocal emits a non-blocking `License
+Metadata Conflict` warning and does not make a GPL-family policy decision for
+that subject.
+
+The local license cache is user-supplied evidence for deterministic CI. It is
+not authoritative proof of the upstream license.
 
 ## Development
 

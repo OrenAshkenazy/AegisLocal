@@ -10,13 +10,14 @@ from typing import Optional
 import typer
 
 from core.console import ScanConsole
-from core.models import ExecutionStatus, ScanReport, SecurityResult
+from core.models import ExecutionStatus, FindingAction, ScanReport, SecurityResult
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
     TARGET_TIMEOUT_SECONDS,
     load_payloads,
     run_dynamic_scan,
 )
+from engines.license_policy import run_license_policy_review
 from engines.static_scanner import (
     discover_manifest_files,
     parse_manifest_files,
@@ -56,14 +57,19 @@ def build_report(
     dynamic_findings,
     dynamic_evidence,
     execution_errors,
+    license_coverage=None,
     scan_duration_seconds: float = 0.0,
 ) -> ScanReport:
-    has_findings = bool(static_findings or dynamic_findings)
+    has_failing_static_findings = any(
+        getattr(finding, "action", FindingAction.FAIL) == FindingAction.FAIL
+        for finding in static_findings
+    )
+    has_failing_findings = has_failing_static_findings or bool(dynamic_findings)
     execution_status = (
         ExecutionStatus.SCAN_INCOMPLETE if execution_errors else ExecutionStatus.COMPLETE
     )
 
-    if has_findings:
+    if has_failing_findings:
         security_result = SecurityResult.FAIL
     elif execution_status == ExecutionStatus.SCAN_INCOMPLETE:
         security_result = SecurityResult.UNKNOWN
@@ -95,6 +101,7 @@ def build_report(
         static_findings=static_findings,
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
+        license_coverage=license_coverage,
         execution_errors=execution_errors,
         passed_audit=passed_audit,
         scan_duration_seconds=scan_duration_seconds,
@@ -114,6 +121,10 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    license_scan: bool,
+    sbom_file: Optional[Path],
+    aibom_file: Optional[Path],
+    license_cache_file: Optional[Path],
     console: ScanConsole,
 ) -> ScanReport:
     start = time.monotonic()
@@ -129,6 +140,22 @@ async def run_scan(
             on_progress=static_cb,
             dependencies=deps,
             initial_errors=dep_errors,
+        )
+
+    license_findings = []
+    license_errors = []
+    license_coverage = None
+    if license_scan:
+        scanned_models = [target_model, judge_model]
+        if fallback_judge_model:
+            scanned_models.append(fallback_judge_model)
+        license_findings, license_coverage, license_errors = run_license_policy_review(
+            project_root=project_root,
+            dependencies=deps,
+            model_names=scanned_models,
+            sbom_path=sbom_file,
+            aibom_path=aibom_file,
+            license_cache_path=license_cache_file,
         )
 
     with console.dynamic_progress(len(payloads)) as dynamic_cb:
@@ -160,10 +187,11 @@ async def run_scan(
         fallback_judge_endpoint=fallback_judge_endpoint,
         fallback_judge_model=fallback_judge_model,
         include_evidence=include_evidence,
-        static_findings=static_findings,
+        static_findings=[*static_findings, *license_findings],
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
-        execution_errors=[*static_errors, *dynamic_errors],
+        license_coverage=license_coverage,
+        execution_errors=[*static_errors, *license_errors, *dynamic_errors],
         scan_duration_seconds=round(duration, 2),
     )
 
@@ -228,6 +256,26 @@ def scan(
         "--include-evidence",
         help="Include sanitized target response excerpts for failed or unknown dynamic payloads.",
     ),
+    license_scan: bool = typer.Option(
+        False,
+        "--license-scan/--no-license-scan",
+        help="Run License Policy Review using local SBOM/AIBOM/cache metadata.",
+    ),
+    sbom_file: Optional[Path] = typer.Option(
+        None,
+        "--sbom",
+        help="CycloneDX SBOM JSON file containing dependency license metadata.",
+    ),
+    aibom_file: Optional[Path] = typer.Option(
+        None,
+        "--aibom",
+        help="CycloneDX-style AIBOM JSON file containing model license metadata.",
+    ),
+    license_cache_file: Optional[Path] = typer.Option(
+        None,
+        "--license-cache",
+        help="Local License Policy Review metadata cache JSON file.",
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -266,6 +314,10 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            license_scan=license_scan,
+            sbom_file=sbom_file,
+            aibom_file=aibom_file,
+            license_cache_file=license_cache_file,
             console=console,
         )
     )

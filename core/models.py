@@ -32,10 +32,17 @@ class ErrorSource(str, Enum):
     CONFIG = "config"
 
 
+class FindingAction(str, Enum):
+    FAIL = "FAIL"
+    WARN = "WARN"
+    INFO = "INFO"
+
+
 class Finding(BaseModel):
     severity: Severity
     category: str
     description: str
+    action: FindingAction = FindingAction.FAIL
     remediation: Optional[str] = None
     fix_available: Optional[bool] = None
     fixed_version: Optional[str] = None
@@ -43,6 +50,19 @@ class Finding(BaseModel):
     package_version: Optional[str] = None
     vulnerability_id: Optional[str] = None
     source_file: Optional[str] = None
+    license_id: Optional[str] = None
+    license_source: Optional[str] = None
+    subject_type: Optional[str] = None
+    subject_name: Optional[str] = None
+
+
+class LicenseCoverage(BaseModel):
+    dependencies_total: int = 0
+    dependencies_with_license_metadata: int = 0
+    dependencies_missing_license_metadata: int = 0
+    models_total: int = 0
+    models_with_license_metadata: int = 0
+    models_missing_license_metadata: int = 0
 
 
 class GroupedFinding(BaseModel):
@@ -99,6 +119,7 @@ class ScanReport(BaseModel):
     static_findings: List[Finding] = Field(default_factory=list)
     dynamic_findings: List[GroupedFinding] = Field(default_factory=list)
     dynamic_evidence: List[DynamicEvidence] = Field(default_factory=list)
+    license_coverage: Optional[LicenseCoverage] = None
     execution_errors: List[ExecutionError] = Field(default_factory=list)
     passed_audit: bool
     scan_duration_seconds: float = 0.0
