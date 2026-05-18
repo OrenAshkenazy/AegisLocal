@@ -24,7 +24,7 @@ def test_discovers_cli_and_config_model_references(tmp_path):
         "\n".join(
             [
                 "TARGET_MODEL=mistralai/Mistral-7B-Instruct-v0.3",
-                "trust_remote_code = true",
+                "trust_remote_code = True",
                 "LOCAL_MODEL=llama3.1:8b",
             ]
         ),
@@ -67,7 +67,7 @@ def test_model_scan_without_manifest_does_not_require_model_approvals(tmp_path):
     config.write_text(
         """
 model = "mistralai/Mistral-7B-Instruct-v0.3"
-trust_remote_code = true
+trust_remote_code = True
 """,
         encoding="utf-8",
     )
