@@ -5,12 +5,13 @@ import asyncio
 import time
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 
 import typer
 
 from core.console import ScanConsole
 from core.models import ExecutionStatus, FindingAction, ScanReport, SecurityResult
+from engines.bom import write_aibom, write_sbom
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
     TARGET_TIMEOUT_SECONDS,
@@ -27,6 +28,9 @@ from engines.static_scanner import (
 
 DEFAULT_ENDPOINT = "http://localhost:11434/v1/chat/completions"
 DEFAULT_MODEL = "llama3.1:8b"
+DEFAULT_SBOM_FILE = "bom.sbom.cdx.json"
+DEFAULT_AIBOM_FILE = "bom.aibom.cdx.json"
+SCAN_MODES = {"static", "dynamic", "licenses", "all"}
 
 app = typer.Typer(help="AegisLocal local AI security scanner.")
 
@@ -121,7 +125,10 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    run_static: bool,
+    run_dynamic: bool,
     license_scan: bool,
+    generate_bom: bool,
     sbom_file: Optional[Path],
     aibom_file: Optional[Path],
     license_cache_file: Optional[Path],
@@ -132,23 +139,31 @@ async def run_scan(
     # Parse once, pass to engines to avoid redundant I/O
     manifest_files = discover_manifest_files(project_root)
     deps, dep_errors = parse_manifest_files(manifest_files)
-    payloads, payload_errors = load_payloads(payload_file)
 
-    with console.static_progress(len(deps)) as static_cb:
-        static_findings, static_errors = await run_static_scan(
-            project_root,
-            on_progress=static_cb,
-            dependencies=deps,
-            initial_errors=dep_errors,
-        )
+    static_findings = []
+    static_errors = []
+    if run_static:
+        with console.static_progress(len(deps)) as static_cb:
+            static_findings, static_errors = await run_static_scan(
+                project_root,
+                on_progress=static_cb,
+                dependencies=deps,
+                initial_errors=dep_errors,
+            )
 
     license_findings = []
     license_errors = []
     license_coverage = None
+    scanned_models = _scan_model_names(target_model, judge_model, fallback_judge_model)
     if license_scan:
-        scanned_models = [target_model, judge_model]
-        if fallback_judge_model:
-            scanned_models.append(fallback_judge_model)
+        sbom_file, aibom_file = _prepare_license_boms(
+            project_root=project_root,
+            dependencies=deps,
+            model_names=scanned_models,
+            sbom_file=sbom_file,
+            aibom_file=aibom_file,
+            generate_bom=generate_bom,
+        )
         license_findings, license_coverage, license_errors = run_license_policy_review(
             project_root=project_root,
             dependencies=deps,
@@ -158,22 +173,27 @@ async def run_scan(
             license_cache_path=license_cache_file,
         )
 
-    with console.dynamic_progress(len(payloads)) as dynamic_cb:
-        dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
-            payload_file=payload_file,
-            target_endpoint=target_endpoint,
-            target_model=target_model,
-            judge_endpoint=judge_endpoint,
-            judge_model=judge_model,
-            fallback_judge_endpoint=fallback_judge_endpoint,
-            fallback_judge_model=fallback_judge_model,
-            target_timeout_seconds=target_timeout_seconds,
-            dynamic_concurrency=dynamic_concurrency,
-            include_evidence=include_evidence,
-            on_progress=dynamic_cb,
-            payloads=payloads,
-            initial_errors=payload_errors,
-        )
+    dynamic_findings = []
+    dynamic_errors = []
+    dynamic_evidence = []
+    if run_dynamic:
+        payloads, payload_errors = load_payloads(payload_file)
+        with console.dynamic_progress(len(payloads)) as dynamic_cb:
+            dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
+                payload_file=payload_file,
+                target_endpoint=target_endpoint,
+                target_model=target_model,
+                judge_endpoint=judge_endpoint,
+                judge_model=judge_model,
+                fallback_judge_endpoint=fallback_judge_endpoint,
+                fallback_judge_model=fallback_judge_model,
+                target_timeout_seconds=target_timeout_seconds,
+                dynamic_concurrency=dynamic_concurrency,
+                include_evidence=include_evidence,
+                on_progress=dynamic_cb,
+                payloads=payloads,
+                initial_errors=payload_errors,
+            )
 
     duration = time.monotonic() - start
 
@@ -196,8 +216,84 @@ async def run_scan(
     )
 
 
+def _scan_model_names(
+    target_model: str,
+    judge_model: str,
+    fallback_judge_model: Optional[str],
+) -> list[str]:
+    model_names = [target_model, judge_model]
+    if fallback_judge_model:
+        model_names.append(fallback_judge_model)
+    return list(dict.fromkeys(model_names))
+
+
+def _prepare_license_boms(
+    *,
+    project_root: Path,
+    dependencies: Sequence,
+    model_names: Sequence[str],
+    sbom_file: Optional[Path],
+    aibom_file: Optional[Path],
+    generate_bom: bool,
+) -> tuple[Optional[Path], Optional[Path]]:
+    resolved_sbom = _resolve_bom_path(project_root, sbom_file, DEFAULT_SBOM_FILE)
+    resolved_aibom = _resolve_bom_path(project_root, aibom_file, DEFAULT_AIBOM_FILE)
+
+    if generate_bom and not resolved_sbom.exists():
+        write_sbom(
+            project_root=project_root,
+            dependencies=dependencies,
+            output_path=resolved_sbom,
+            scanner_version=_get_version(),
+        )
+        typer.echo(f"Generated missing SBOM: {resolved_sbom}", err=True)
+
+    if generate_bom and not resolved_aibom.exists():
+        write_aibom(
+            project_root=project_root,
+            model_names=model_names,
+            output_path=resolved_aibom,
+            scanner_version=_get_version(),
+        )
+        typer.echo(f"Generated missing AIBOM: {resolved_aibom}", err=True)
+
+    return (
+        resolved_sbom if resolved_sbom.exists() else None,
+        resolved_aibom if resolved_aibom.exists() else None,
+    )
+
+
+def _resolve_bom_path(project_root: Path, path: Optional[Path], default_name: str) -> Path:
+    selected = path or Path(default_name)
+    return selected if selected.is_absolute() else project_root / selected
+
+
+def _scan_mode_flags(scan_mode: Optional[str], license_scan: bool) -> tuple[bool, bool, bool, bool]:
+    if scan_mode is None:
+        return True, True, license_scan, True
+
+    normalized = scan_mode.lower()
+    if normalized not in SCAN_MODES:
+        allowed = ", ".join(sorted(SCAN_MODES))
+        typer.echo(f"Error: scan type must be one of: {allowed}", err=True)
+        raise typer.Exit(code=2)
+
+    if normalized == "static":
+        return True, False, license_scan, True
+    if normalized == "dynamic":
+        return False, True, False, False
+    if normalized == "licenses":
+        return False, False, True, True
+    return True, True, True, True
+
+
 @app.command()
 def scan(
+    scan_mode: Optional[str] = typer.Argument(
+        None,
+        metavar="[static|dynamic|licenses|all]",
+        help="Optional scan type. Use 'licenses' for License Policy Review.",
+    ),
     project_root: Path = typer.Option(
         Path("."),
         "--project-root",
@@ -276,6 +372,11 @@ def scan(
         "--license-cache",
         help="Local License Policy Review metadata cache JSON file.",
     ),
+    generate_bom: bool = typer.Option(
+        True,
+        "--generate-bom/--no-generate-bom",
+        help="Generate missing default SBOM/AIBOM files for License Policy Review.",
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -300,6 +401,10 @@ def scan(
         raise typer.Exit(code=2)
 
     console = ScanConsole(quiet=quiet, verbose=verbose)
+    run_static, run_dynamic, effective_license_scan, effective_generate_bom = _scan_mode_flags(
+        scan_mode,
+        license_scan,
+    )
 
     report = asyncio.run(
         run_scan(
@@ -314,7 +419,10 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
-            license_scan=license_scan,
+            run_static=run_static,
+            run_dynamic=run_dynamic,
+            license_scan=effective_license_scan,
+            generate_bom=generate_bom and effective_generate_bom,
             sbom_file=sbom_file,
             aibom_file=aibom_file,
             license_cache_file=license_cache_file,

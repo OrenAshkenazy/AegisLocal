@@ -42,6 +42,23 @@ The default model endpoint is:
 http://localhost:11434/v1/chat/completions
 ```
 
+## TL;DR
+
+Pick the scan type that matches what you want to check:
+
+| Goal | Command |
+| --- | --- |
+| Check Python dependency vulnerabilities | `uv run python main.py scan static` |
+| Test local model behavior | `uv run python main.py scan dynamic --target-model llama3.1:8b` |
+| Review dependency/model licenses | `uv run python main.py scan licenses` |
+| Run dependency, behavior, and license checks | `uv run python main.py scan all` |
+
+`scan licenses` auto-generates missing default BOM files before reviewing
+licenses:
+
+- `bom.sbom.cdx.json`
+- `bom.aibom.cdx.json`
+
 ## Installation
 
 From the repository root:
@@ -59,14 +76,22 @@ uv run python main.py --help
 
 ## Running a Scan
 
-Basic scan:
+Recommended commands:
+
+```bash
+uv run python main.py scan static
+uv run python main.py scan dynamic --target-model llama3.1:8b
+uv run python main.py scan licenses
+uv run python main.py scan all
+```
+
+The legacy command still works:
 
 ```bash
 uv run python main.py scan
 ```
 
-This scans the current directory, loads payloads from `data/payloads.json`, and
-uses the default local Ollama-compatible chat completions endpoint.
+It runs the original combined static and dynamic scan.
 
 Example with explicit models:
 
@@ -120,6 +145,7 @@ ollama pull llama3.2:1b
 ## CLI Options
 
 ```text
+[static|dynamic|licenses|all]     Optional scan type.
 --project-root PATH              Project root to recursively scan.
 --payload-file PATH              Dynamic payload JSON file.
 --target-endpoint TEXT           Target chat-completions endpoint.
@@ -138,6 +164,9 @@ ollama pull llama3.2:1b
 --sbom PATH                      CycloneDX SBOM JSON with dependency licenses.
 --aibom PATH                     CycloneDX-style AIBOM JSON with model licenses.
 --license-cache PATH             Local license metadata cache JSON.
+--generate-bom / --no-generate-bom
+                                  Generate missing default SBOM/AIBOM files for
+                                  License Policy Review.
 ```
 
 ## Report Semantics
@@ -337,15 +366,26 @@ License Policy Review checks dependency and model license metadata from local
 evidence sources only. It does not perform one network lookup per package or
 model during the normal scan.
 
-Run it with local SBOM/AIBOM/cache inputs:
+Run it with one command:
 
 ```bash
-uv run python main.py scan \
-  --license-scan \
-  --sbom bom.sbom.cdx.json \
-  --aibom bom.aibom.cdx.json \
-  --license-cache .aegislocal/license-metadata-cache.json
+uv run python main.py scan licenses
 ```
+
+If `bom.sbom.cdx.json` or `bom.aibom.cdx.json` does not exist, AegisLocal
+generates the missing file before reviewing licenses. Existing files are reused.
+
+Advanced users can pass explicit local evidence files:
+
+```bash
+uv run python main.py scan licenses \
+  --sbom path/to/bom.sbom.cdx.json \
+  --aibom path/to/bom.aibom.cdx.json \
+  --license-cache path/to/license-metadata-cache.json
+```
+
+Use `--no-generate-bom` when CI should rely only on BOM files that already
+exist. Missing license metadata is then reported as coverage gaps.
 
 The review currently warns on GPL-family licenses:
 
