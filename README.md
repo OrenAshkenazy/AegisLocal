@@ -341,7 +341,23 @@ For `uv.lock` and `poetry.lock`, package versions are already resolved, so
 AegisLocal reads the resolved package entries directly.
 
 When a lockfile and `pyproject.toml` are present in the same directory,
-AegisLocal prefers the lockfile as the source of truth.
+AegisLocal prefers the lockfile as the source of truth. If the same
+package/version is discovered from multiple files, AegisLocal audits it once
+and prefers the direct manifest path, such as `requirements.txt`, in the
+reported finding.
+
+Dependency vulnerability severity is derived from OSV metadata when available.
+AegisLocal first uses an advisory severity label, then a CVSS v3 score or vector
+from OSV's `severity` field. CVSS scores are mapped as:
+
+- `CRITICAL`: 9.0-10.0
+- `HIGH`: 7.0-8.9
+- `MEDIUM`: 4.0-6.9
+- `LOW`: 0.1-3.9
+- `INFO`: 0.0
+
+If OSV does not provide a supported severity value, AegisLocal falls back to
+`HIGH` so vulnerability findings are not silently downplayed.
 
 Static findings include fixability metadata when OSV provides it:
 

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import math
 import os
 import re
 import sys
@@ -42,6 +43,7 @@ SUPPORTED_EXACT_SPEC_RE = re.compile(
     r"^\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[A-Za-z0-9_,_.-]+\])?\s*==\s*([^\s;#]+)"
 )
 SUPPORTED_MANIFEST_NAMES = {"pyproject.toml", "uv.lock", "poetry.lock"}
+LOCKFILE_NAMES = {"uv.lock", "poetry.lock"}
 
 
 @dataclass(frozen=True)
@@ -361,15 +363,26 @@ def _append_dependency_or_error(
 
 
 def _dedupe_dependencies(dependencies: Iterable[Dependency]) -> List[Dependency]:
-    seen = set()
+    indexes_by_key: dict[tuple[str, str], int] = {}
     deduped: List[Dependency] = []
     for dependency in dependencies:
-        key = (dependency.name.lower(), dependency.version, str(dependency.source_file))
-        if key in seen:
+        key = (dependency.name.lower(), dependency.version)
+        existing_index = indexes_by_key.get(key)
+        if existing_index is None:
+            indexes_by_key[key] = len(deduped)
+            deduped.append(dependency)
             continue
-        seen.add(key)
-        deduped.append(dependency)
+        existing = deduped[existing_index]
+        if _source_priority(dependency.source_file) < _source_priority(existing.source_file):
+            deduped[existing_index] = dependency
     return deduped
+
+
+def _source_priority(path: Path | str | None) -> int:
+    if path is None:
+        return 2
+    name = Path(path).name
+    return 1 if name in LOCKFILE_NAMES else 0
 
 
 async def _query_osv(
@@ -418,7 +431,7 @@ async def _query_osv(
         )
         findings.append(
             Finding(
-                severity=Severity.HIGH,
+                severity=_select_severity(vuln),
                 category="Dependency Vulnerability",
                 description=(
                     f"{dependency.name}=={dependency.version} is affected by "
@@ -442,6 +455,129 @@ def _select_vulnerability_id(vuln: dict) -> str:
         if alias.startswith(("CVE-", "GHSA-")):
             return alias
     return str(vuln.get("id") or "UNKNOWN")
+
+
+def _select_severity(vuln: dict) -> Severity:
+    database_specific_severity = (vuln.get("database_specific") or {}).get("severity")
+    severity = _severity_from_raw_value(database_specific_severity)
+    if severity is not None:
+        return severity
+
+    for item in vuln.get("severity") or []:
+        if not isinstance(item, dict):
+            continue
+        severity = _severity_from_raw_value(item.get("score"))
+        if severity is not None:
+            return severity
+
+    return Severity.HIGH
+
+
+def _severity_from_raw_value(raw_value: object) -> Optional[Severity]:
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, (int, float)):
+        return _severity_from_cvss_score(float(raw_value))
+    if not isinstance(raw_value, str):
+        return None
+
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    severity_names = {
+        "CRITICAL": Severity.CRITICAL,
+        "HIGH": Severity.HIGH,
+        "MODERATE": Severity.MEDIUM,
+        "MEDIUM": Severity.MEDIUM,
+        "LOW": Severity.LOW,
+        "INFO": Severity.INFO,
+        "INFORMATIONAL": Severity.INFO,
+        "NONE": Severity.INFO,
+    }
+    named_severity = severity_names.get(value.upper())
+    if named_severity is not None:
+        return named_severity
+
+    try:
+        return _severity_from_cvss_score(float(value))
+    except ValueError:
+        pass
+
+    if value.startswith(("CVSS:3.0/", "CVSS:3.1/")):
+        score = _cvss_v3_base_score(value)
+        if score is not None:
+            return _severity_from_cvss_score(score)
+
+    return None
+
+
+def _severity_from_cvss_score(score: float) -> Severity:
+    if score >= 9.0:
+        return Severity.CRITICAL
+    if score >= 7.0:
+        return Severity.HIGH
+    if score >= 4.0:
+        return Severity.MEDIUM
+    if score > 0:
+        return Severity.LOW
+    return Severity.INFO
+
+
+def _cvss_v3_base_score(vector: str) -> Optional[float]:
+    parts = vector.split("/")
+    if not parts or parts[0] not in {"CVSS:3.0", "CVSS:3.1"}:
+        return None
+
+    metrics: dict[str, str] = {}
+    for part in parts[1:]:
+        if ":" not in part:
+            continue
+        name, value = part.split(":", 1)
+        metrics[name] = value
+
+    required_metrics = {"AV", "AC", "PR", "UI", "S", "C", "I", "A"}
+    if not required_metrics.issubset(metrics):
+        return None
+
+    scope = metrics["S"]
+    av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}.get(metrics["AV"])
+    ac = {"L": 0.77, "H": 0.44}.get(metrics["AC"])
+    ui = {"N": 0.85, "R": 0.62}.get(metrics["UI"])
+    cia_values = {"H": 0.56, "L": 0.22, "N": 0.0}
+    confidentiality = cia_values.get(metrics["C"])
+    integrity = cia_values.get(metrics["I"])
+    availability = cia_values.get(metrics["A"])
+    if scope == "U":
+        pr = {"N": 0.85, "L": 0.62, "H": 0.27}.get(metrics["PR"])
+    elif scope == "C":
+        pr = {"N": 0.85, "L": 0.68, "H": 0.5}.get(metrics["PR"])
+    else:
+        return None
+
+    if None in {av, ac, pr, ui, confidentiality, integrity, availability}:
+        return None
+
+    impact = 1 - (
+        (1 - confidentiality)
+        * (1 - integrity)
+        * (1 - availability)
+    )
+    if impact <= 0:
+        return 0.0
+
+    exploitability = 8.22 * av * ac * pr * ui
+    if scope == "U":
+        impact_sub_score = 6.42 * impact
+        raw_score = impact_sub_score + exploitability
+    else:
+        impact_sub_score = 7.52 * (impact - 0.029) - 3.25 * ((impact - 0.02) ** 15)
+        raw_score = 1.08 * (impact_sub_score + exploitability)
+    return min(_round_up_1_decimal(raw_score), 10.0)
+
+
+def _round_up_1_decimal(value: float) -> float:
+    return math.ceil((value - 1e-10) * 10) / 10
 
 
 def _select_fixed_version(
@@ -515,22 +651,24 @@ async def run_static_scan(
             *(_query_and_report(session, dependency, semaphore) for dependency in dependencies)
         )
 
-    findings: List[Finding] = []
-    seen_findings = set()
+    findings_by_key: dict[tuple[Optional[str], Optional[str], Optional[str]], Finding] = {}
+    finding_order: List[tuple[Optional[str], Optional[str], Optional[str]]] = []
     for dependency_findings, dependency_errors in results:
         for finding in dependency_findings:
             key = (
                 finding.package_name,
                 finding.package_version,
                 finding.vulnerability_id,
-                finding.source_file,
             )
-            if key in seen_findings:
+            existing = findings_by_key.get(key)
+            if existing is None:
+                findings_by_key[key] = finding
+                finding_order.append(key)
                 continue
-            seen_findings.add(key)
-            findings.append(finding)
+            if _source_priority(finding.source_file) < _source_priority(existing.source_file):
+                findings_by_key[key] = finding
         errors.extend(dependency_errors)
-    return findings, errors
+    return [findings_by_key[key] for key in finding_order], errors
 
 
 __all__ = [

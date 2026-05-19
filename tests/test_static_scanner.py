@@ -1,9 +1,12 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from pathlib import Path
 
+from core.models import Finding, Severity
 from engines.static_scanner import (
+    Dependency,
     discover_manifest_files,
     discover_requirement_files,
     parse_manifest_files,
@@ -179,7 +182,6 @@ version = "2.20.0"
 
     assert [(dependency.name, dependency.version, dependency.source_file.name) for dependency in dependencies] == [
         ("requests", "2.20.0", "requirements.txt"),
-        ("requests", "2.20.0", "uv.lock"),
     ]
     assert errors == []
 
@@ -277,3 +279,61 @@ def test_select_fixed_version_ignores_unrelated_packages_and_downgrades():
     }
 
     assert static_scanner._select_fixed_version(vuln, "requests", "2.20.0") == "2.32.4"
+
+
+def test_select_severity_prefers_database_specific_severity():
+    vuln = {
+        "database_specific": {"severity": "CRITICAL"},
+        "severity": [{"type": "CVSS_V3", "score": "7.1"}],
+    }
+
+    assert static_scanner._select_severity(vuln) == Severity.CRITICAL
+
+
+def test_select_severity_from_cvss_vector():
+    vuln = {
+        "severity": [
+            {
+                "type": "CVSS_V3",
+                "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+            }
+        ]
+    }
+
+    assert static_scanner._select_severity(vuln) == Severity.CRITICAL
+
+
+def test_select_severity_defaults_high_when_osv_has_no_supported_score():
+    assert static_scanner._select_severity({}) == Severity.HIGH
+
+
+def test_static_scan_dedupes_findings_across_sources_preferring_manifest(monkeypatch, tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    uv_lock = tmp_path / "uv.lock"
+    dependencies = [
+        Dependency("requests", "2.20.0", uv_lock, 1),
+        Dependency("requests", "2.20.0", requirements, 1),
+    ]
+
+    async def fake_query_osv(_session, dependency, _semaphore):
+        return [
+            Finding(
+                severity=Severity.HIGH,
+                category="Dependency Vulnerability",
+                description="requests==2.20.0 is affected by CVE-2099-0001.",
+                package_name=dependency.name,
+                package_version=dependency.version,
+                vulnerability_id="CVE-2099-0001",
+                source_file=str(dependency.source_file),
+            )
+        ], []
+
+    monkeypatch.setattr(static_scanner, "_query_osv", fake_query_osv)
+
+    findings, errors = asyncio.run(
+        static_scanner.run_static_scan(tmp_path, dependencies=dependencies)
+    )
+
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0].source_file == str(requirements)
