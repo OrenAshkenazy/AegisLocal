@@ -62,6 +62,10 @@ def test_discovery_excludes_tests_fixtures_and_virtualenv_dirs(tmp_path):
     codex_worktree.parent.mkdir(parents=True)
     codex_worktree.write_text("ignored==1.0.0", encoding="utf-8")
 
+    local_worktree = tmp_path / ".worktrees" / "branch-copy" / "requirements.txt"
+    local_worktree.parent.mkdir(parents=True)
+    local_worktree.write_text("ignored==1.0.0", encoding="utf-8")
+
     assert discover_requirement_files(tmp_path) == [included]
 
 

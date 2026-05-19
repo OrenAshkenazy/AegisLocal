@@ -28,6 +28,7 @@ EXCLUDED_DIR_NAMES = {
     ".claude",
     ".codex",
     ".git",
+    ".worktrees",
     ".venv",
     "venv",
     "env",

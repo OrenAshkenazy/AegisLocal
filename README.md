@@ -318,7 +318,8 @@ and explicit resource-exhaustion probes.
 
 The static scanner recursively discovers supported Python dependency manifests
 while excluding common generated or noisy directories such as `.git`, `.venv`,
-`.claude`, `.codex`, `node_modules`, `dist`, `build`, and `tests/fixtures`.
+`.claude`, `.codex`, `.worktrees`, `node_modules`, `dist`, `build`, and
+`tests/fixtures`.
 
 Supported manifests:
 
