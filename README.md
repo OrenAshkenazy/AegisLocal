@@ -412,6 +412,11 @@ default enrichment step fills the local cache when metadata is missing:
 - Ollama-style local model names: left as missing unless supplied in cache or
   AIBOM metadata.
 
+For license-only scans, model inventory comes from project `.env` files such as
+`AI_MAIN_MODEL`, `AI_INSIGHT_MODEL`, or `AI_GUARD_MODEL`. The dynamic-scan
+default target/judge model is not added to the AIBOM unless a dynamic scan is
+actually running.
+
 Advanced users can pass explicit local evidence files:
 
 ```bash

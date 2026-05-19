@@ -20,6 +20,7 @@ from engines.dynamic_fuzzer import (
 )
 from engines.license_enrichment import enrich_license_metadata
 from engines.license_policy import run_license_policy_review
+from engines.model_inventory import discover_project_model_names
 from engines.static_scanner import (
     discover_manifest_files,
     parse_manifest_files,
@@ -171,7 +172,13 @@ async def run_scan(
     license_findings = []
     license_errors = []
     license_coverage = None
-    scanned_models = _scan_model_names(target_model, judge_model, fallback_judge_model)
+    scanned_models = _license_model_names(
+        project_root=project_root,
+        target_model=target_model,
+        judge_model=judge_model,
+        fallback_judge_model=fallback_judge_model,
+        include_runtime_models=run_dynamic,
+    )
     if license_scan:
         sbom_file, aibom_file = _prepare_license_boms(
             project_root=project_root,
@@ -259,6 +266,27 @@ def _scan_model_names(
     if fallback_judge_model:
         model_names.append(fallback_judge_model)
     return list(dict.fromkeys(model_names))
+
+
+def _license_model_names(
+    *,
+    project_root: Path,
+    target_model: str,
+    judge_model: str,
+    fallback_judge_model: Optional[str],
+    include_runtime_models: bool,
+) -> list[str]:
+    model_names = discover_project_model_names(project_root)
+    if include_runtime_models:
+        model_names.extend(_scan_model_names(target_model, judge_model, fallback_judge_model))
+    else:
+        if target_model != DEFAULT_MODEL:
+            model_names.append(target_model)
+        if judge_model != DEFAULT_MODEL:
+            model_names.append(judge_model)
+        if fallback_judge_model:
+            model_names.append(fallback_judge_model)
+    return list(dict.fromkeys(model for model in model_names if model))
 
 
 def _prepare_license_boms(
