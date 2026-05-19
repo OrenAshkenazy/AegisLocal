@@ -92,8 +92,12 @@ class ScanConsole:
         lines.append("Result: ")
         lines.append(result.value, style=style)
         lines.append(f"\nDuration: {report.scan_duration_seconds:.1f}s")
-        lines.append(f"\nStatic findings: {len(report.static_findings)}")
-        lines.append(f"\nDynamic findings: {len(report.dynamic_findings)}")
+        if report.static_findings is not None:
+            lines.append(f"\nStatic findings: {len(report.static_findings)}")
+        if report.dynamic_findings is not None:
+            lines.append(f"\nDynamic findings: {len(report.dynamic_findings)}")
+        if report.license_findings is not None:
+            lines.append(f"\nLicense findings: {len(report.license_findings)}")
         if report.license_coverage is not None:
             coverage = report.license_coverage
             lines.append(
@@ -106,5 +110,10 @@ class ScanConsole:
         lines.append(f"\nExecution errors: {len(report.execution_errors)}")
         lines.append(f"\nVersion: {report.scanner_version}")
 
-        panel = Panel(lines, title="AegisLocal Scan Report", border_style=border)
+        title = (
+            "AegisLocal License Policy Review"
+            if report.scan_type == "licenses"
+            else "AegisLocal Scan Report"
+        )
+        panel = Panel(lines, title=title, border_style=border)
         self._console.print(panel)

@@ -61,12 +61,21 @@ def build_report(
     dynamic_findings,
     dynamic_evidence,
     execution_errors,
+    license_findings=None,
     license_coverage=None,
+    scan_type: str = "all",
+    include_static_section: bool = True,
+    include_dynamic_section: bool = True,
+    include_license_section: bool = False,
     scan_duration_seconds: float = 0.0,
 ) -> ScanReport:
+    static_findings = list(static_findings or [])
+    dynamic_findings = list(dynamic_findings or [])
+    dynamic_evidence = list(dynamic_evidence or [])
+    license_findings = list(license_findings or [])
     has_failing_static_findings = any(
         getattr(finding, "action", FindingAction.FAIL) == FindingAction.FAIL
-        for finding in static_findings
+        for finding in [*static_findings, *license_findings]
     )
     has_failing_findings = has_failing_static_findings or bool(dynamic_findings)
     execution_status = (
@@ -86,15 +95,20 @@ def build_report(
     )
 
     return ScanReport(
-        target_endpoint=target_endpoint,
-        target_model=target_model,
-        target_timeout_seconds=target_timeout_seconds,
-        dynamic_concurrency=dynamic_concurrency,
-        judge_endpoint=judge_endpoint,
-        judge_model=judge_model,
-        fallback_judge_endpoint=fallback_judge_endpoint,
-        fallback_judge_model=fallback_judge_model,
-        include_evidence=include_evidence,
+        scan_type=scan_type,
+        target_endpoint=target_endpoint if include_dynamic_section else None,
+        target_model=target_model if include_dynamic_section else None,
+        target_timeout_seconds=(
+            target_timeout_seconds if include_dynamic_section else None
+        ),
+        dynamic_concurrency=dynamic_concurrency if include_dynamic_section else None,
+        judge_endpoint=judge_endpoint if include_dynamic_section else None,
+        judge_model=judge_model if include_dynamic_section else None,
+        fallback_judge_endpoint=(
+            fallback_judge_endpoint if include_dynamic_section else None
+        ),
+        fallback_judge_model=fallback_judge_model if include_dynamic_section else None,
+        include_evidence=include_evidence if include_dynamic_section else None,
         security_result=security_result,
         execution_status=execution_status,
         status_message=(
@@ -102,10 +116,11 @@ def build_report(
             if execution_status == ExecutionStatus.SCAN_INCOMPLETE
             else "COMPLETE"
         ),
-        static_findings=static_findings,
-        dynamic_findings=dynamic_findings,
-        dynamic_evidence=dynamic_evidence,
-        license_coverage=license_coverage,
+        static_findings=static_findings if include_static_section else None,
+        dynamic_findings=dynamic_findings if include_dynamic_section else None,
+        dynamic_evidence=dynamic_evidence if include_dynamic_section else None,
+        license_findings=license_findings if include_license_section else None,
+        license_coverage=license_coverage if include_license_section else None,
         execution_errors=execution_errors,
         passed_audit=passed_audit,
         scan_duration_seconds=scan_duration_seconds,
@@ -196,6 +211,7 @@ async def run_scan(
             )
 
     duration = time.monotonic() - start
+    scan_type = _report_scan_type(run_static, run_dynamic, license_scan)
 
     return build_report(
         target_endpoint=target_endpoint,
@@ -207,11 +223,16 @@ async def run_scan(
         fallback_judge_endpoint=fallback_judge_endpoint,
         fallback_judge_model=fallback_judge_model,
         include_evidence=include_evidence,
-        static_findings=[*static_findings, *license_findings],
+        static_findings=static_findings,
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
+        license_findings=license_findings,
         license_coverage=license_coverage,
         execution_errors=[*static_errors, *license_errors, *dynamic_errors],
+        scan_type=scan_type,
+        include_static_section=run_static,
+        include_dynamic_section=run_dynamic,
+        include_license_section=license_scan,
         scan_duration_seconds=round(duration, 2),
     )
 
@@ -285,6 +306,18 @@ def _scan_mode_flags(scan_mode: Optional[str], license_scan: bool) -> tuple[bool
     if normalized == "licenses":
         return False, False, True, True
     return True, True, True, True
+
+
+def _report_scan_type(run_static: bool, run_dynamic: bool, license_scan: bool) -> str:
+    if license_scan and not run_static and not run_dynamic:
+        return "licenses"
+    if run_static and not run_dynamic and not license_scan:
+        return "static"
+    if run_dynamic and not run_static and not license_scan:
+        return "dynamic"
+    if run_static and run_dynamic and license_scan:
+        return "all"
+    return "custom"
 
 
 @app.command()
@@ -432,7 +465,7 @@ def scan(
 
     console.print_summary(report)
 
-    report_json = report.model_dump_json(indent=2)
+    report_json = report.model_dump_json(indent=2, exclude_none=True)
     typer.echo(report_json)
 
     if output_file is not None:

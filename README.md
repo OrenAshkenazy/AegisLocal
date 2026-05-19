@@ -374,6 +374,8 @@ uv run python main.py scan licenses
 
 If `bom.sbom.cdx.json` or `bom.aibom.cdx.json` does not exist, AegisLocal
 generates the missing file before reviewing licenses. Existing files are reused.
+The JSON output for `scan licenses` is focused on `license_findings` and
+`license_coverage`; model endpoint and dynamic-scan fields are omitted.
 
 Advanced users can pass explicit local evidence files:
 
