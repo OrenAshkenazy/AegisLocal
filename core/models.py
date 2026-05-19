@@ -43,6 +43,12 @@ class Finding(BaseModel):
     package_version: Optional[str] = None
     vulnerability_id: Optional[str] = None
     source_file: Optional[str] = None
+    source_line: Optional[int] = None
+    artifact_type: Optional[str] = None
+    model_name: Optional[str] = None
+    model_source: Optional[str] = None
+    license: Optional[str] = None
+    references: Optional[List[str]] = None
 
 
 class GroupedFinding(BaseModel):

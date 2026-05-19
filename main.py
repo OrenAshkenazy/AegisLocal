@@ -17,6 +17,14 @@ from engines.dynamic_fuzzer import (
     load_payloads,
     run_dynamic_scan,
 )
+from engines.bom import (
+    build_cyclonedx_aibom,
+    build_cyclonedx_sbom,
+    collect_bom_dependencies,
+    split_bom_output_paths,
+    write_cyclonedx_bom,
+)
+from engines.model_scanner import collect_model_inventory, scan_model_supply_chain
 from engines.static_scanner import (
     discover_manifest_files,
     parse_manifest_files,
@@ -114,6 +122,7 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    static_only: bool,
     console: ScanConsole,
 ) -> ScanReport:
     start = time.monotonic()
@@ -121,7 +130,10 @@ async def run_scan(
     # Parse once, pass to engines to avoid redundant I/O
     manifest_files = discover_manifest_files(project_root)
     deps, dep_errors = parse_manifest_files(manifest_files)
-    payloads, payload_errors = load_payloads(payload_file)
+    payloads = []
+    payload_errors = []
+    if not static_only:
+        payloads, payload_errors = load_payloads(payload_file)
 
     with console.static_progress(len(deps)) as static_cb:
         static_findings, static_errors = await run_static_scan(
@@ -130,23 +142,38 @@ async def run_scan(
             dependencies=deps,
             initial_errors=dep_errors,
         )
+    model_inventory = await asyncio.to_thread(
+        collect_model_inventory,
+        project_root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        include_hashes=False,
+    )
+    model_findings, model_errors = scan_model_supply_chain(
+        project_root,
+        inventory=model_inventory,
+    )
 
-    with console.dynamic_progress(len(payloads)) as dynamic_cb:
-        dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
-            payload_file=payload_file,
-            target_endpoint=target_endpoint,
-            target_model=target_model,
-            judge_endpoint=judge_endpoint,
-            judge_model=judge_model,
-            fallback_judge_endpoint=fallback_judge_endpoint,
-            fallback_judge_model=fallback_judge_model,
-            target_timeout_seconds=target_timeout_seconds,
-            dynamic_concurrency=dynamic_concurrency,
-            include_evidence=include_evidence,
-            on_progress=dynamic_cb,
-            payloads=payloads,
-            initial_errors=payload_errors,
-        )
+    dynamic_findings = []
+    dynamic_errors = []
+    dynamic_evidence = []
+    if not static_only:
+        with console.dynamic_progress(len(payloads)) as dynamic_cb:
+            dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
+                payload_file=payload_file,
+                target_endpoint=target_endpoint,
+                target_model=target_model,
+                judge_endpoint=judge_endpoint,
+                judge_model=judge_model,
+                fallback_judge_endpoint=fallback_judge_endpoint,
+                fallback_judge_model=fallback_judge_model,
+                target_timeout_seconds=target_timeout_seconds,
+                dynamic_concurrency=dynamic_concurrency,
+                include_evidence=include_evidence,
+                on_progress=dynamic_cb,
+                payloads=payloads,
+                initial_errors=payload_errors,
+            )
 
     duration = time.monotonic() - start
 
@@ -160,10 +187,10 @@ async def run_scan(
         fallback_judge_endpoint=fallback_judge_endpoint,
         fallback_judge_model=fallback_judge_model,
         include_evidence=include_evidence,
-        static_findings=static_findings,
+        static_findings=[*static_findings, *model_findings],
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
-        execution_errors=[*static_errors, *dynamic_errors],
+        execution_errors=[*static_errors, *model_errors, *dynamic_errors],
         scan_duration_seconds=round(duration, 2),
     )
 
@@ -228,6 +255,11 @@ def scan(
         "--include-evidence",
         help="Include sanitized target response excerpts for failed or unknown dynamic payloads.",
     ),
+    static_only: bool = typer.Option(
+        False,
+        "--static-only",
+        help="Run dependency and model provenance checks only; skip dynamic payloads.",
+    ),
     quiet: bool = typer.Option(
         False,
         "--quiet",
@@ -266,6 +298,7 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            static_only=static_only,
             console=console,
         )
     )
@@ -279,6 +312,78 @@ def scan(
         output_file.write_text(report_json, encoding="utf-8")
 
     raise typer.Exit(code=0 if report.passed_audit else 1)
+
+
+@app.command("bom")
+def bom_command(
+    project_root: Path = typer.Option(
+        Path("."),
+        "--project-root",
+        help="Project root to inventory for SBOM/AIBOM output.",
+    ),
+    output_file: Path = typer.Option(
+        ...,
+        "--output",
+        "-o",
+        help="Output path prefix. Writes separate .sbom and .aibom CycloneDX JSON files.",
+    ),
+    target_model: Optional[str] = typer.Option(
+        None,
+        "--target-model",
+        help="Optional runtime model name to include in the AIBOM inventory.",
+    ),
+    target_endpoint: Optional[str] = typer.Option(
+        None,
+        "--target-endpoint",
+        help="Optional runtime endpoint used only to infer model source metadata.",
+    ),
+    strict: bool = typer.Option(
+        False,
+        "--strict",
+        help="Exit nonzero when inventory warnings are encountered.",
+    ),
+) -> None:
+    manifest_files = discover_manifest_files(project_root)
+    deps, dep_errors = collect_bom_dependencies(manifest_files)
+    model_inventory = collect_model_inventory(
+        project_root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        include_hashes=True,
+    )
+    scanner_version = _get_version()
+    sbom = build_cyclonedx_sbom(
+        project_root,
+        deps,
+        scanner_version=scanner_version,
+    )
+    aibom = build_cyclonedx_aibom(
+        project_root,
+        target_model=target_model,
+        target_endpoint=target_endpoint,
+        scanner_version=scanner_version,
+        model_inventory=model_inventory,
+    )
+    sbom_output_file, aibom_output_file = split_bom_output_paths(output_file)
+    write_cyclonedx_bom(sbom_output_file, sbom)
+    write_cyclonedx_bom(aibom_output_file, aibom)
+
+    execution_errors = [
+        *dep_errors,
+        *model_inventory.manifest_errors,
+        *model_inventory.artifact_errors,
+    ]
+    if execution_errors:
+        typer.echo(
+            "Wrote BOMs with "
+            f"{len(execution_errors)} inventory warning(s): "
+            f"{sbom_output_file}, {aibom_output_file}",
+            err=True,
+        )
+        raise typer.Exit(code=1 if strict else 0)
+
+    typer.echo(f"Wrote SBOM: {sbom_output_file}")
+    typer.echo(f"Wrote AIBOM: {aibom_output_file}")
 
 
 if __name__ == "__main__":

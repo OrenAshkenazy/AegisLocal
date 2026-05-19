@@ -59,38 +59,85 @@ uv run python main.py --help
 
 ## Running a Scan
 
-Basic scan:
+A scan combines three checks:
+
+- Python dependency supply-chain scanning
+- model provenance scanning for model names, local model files, and adapters
+- dynamic red-team prompts against a target model endpoint
+
+Use `--static-only` when you want dependency and model provenance findings
+without running dynamic LLM prompts or requiring a local model server:
+
+```bash
+uv run python main.py scan --project-root ~/dev/project --static-only
+```
+
+Scan the current directory with the default local Ollama-compatible endpoint:
 
 ```bash
 uv run python main.py scan
 ```
 
-This scans the current directory, loads payloads from `data/payloads.json`, and
-uses the default local Ollama-compatible chat completions endpoint.
+By default, this uses:
 
-Example with explicit models:
+- project root: `.`
+- target endpoint: `http://localhost:11434/v1/chat/completions`
+- target model: `llama3.1:8b`
+- judge endpoint: `http://localhost:11434/v1/chat/completions`
+- judge model: `llama3.1:8b`
+- payload file: `data/payloads.json`
+
+Scan another project:
+
+```bash
+uv run python main.py scan --project-root ~/dev/project
+```
+
+Use explicit target and judge models:
 
 ```bash
 uv run python main.py scan \
+  --project-root ~/dev/project \
   --target-model llama3.1:8b \
   --judge-model llama3.1:8b
 ```
 
-Example with a fallback judge model:
+Use a different target endpoint:
 
 ```bash
 uv run python main.py scan \
+  --project-root ~/dev/project \
+  --target-endpoint http://localhost:11434/v1/chat/completions \
+  --target-model llama3.1:8b \
+  --judge-endpoint http://localhost:11434/v1/chat/completions \
+  --judge-model llama3.1:8b
+```
+
+Add a fallback judge model when the primary judge is unreliable:
+
+```bash
+uv run python main.py scan \
+  --project-root ~/dev/project \
   --target-model llama3.1:8b \
   --judge-model llama3.1:8b \
   --fallback-judge-model llama3.2:1b
 ```
 
-Example with slower local hardware:
+Use conservative settings for slower local hardware:
 
 ```bash
 uv run python main.py scan \
+  --project-root ~/dev/project \
   --target-timeout 60 \
   --dynamic-concurrency 1
+```
+
+Write the JSON report to a file as well as stdout:
+
+```bash
+uv run python main.py scan \
+  --project-root ~/dev/project \
+  --output-file aegislocal-report.json
 ```
 
 ## Ollama Example
@@ -119,6 +166,8 @@ ollama pull llama3.2:1b
 
 ## CLI Options
 
+Common `scan` options:
+
 ```text
 --project-root PATH              Project root to recursively scan.
 --payload-file PATH              Dynamic payload JSON file.
@@ -132,6 +181,10 @@ ollama pull llama3.2:1b
 --fallback-judge-model TEXT      Optional fallback judge model.
 --include-evidence               Include sanitized evidence for failed or
                                   unknown dynamic payloads.
+--static-only                    Skip dynamic payloads and run static checks only.
+--output-file PATH               Write the JSON scan report to a file.
+--quiet                          Suppress terminal UI. JSON report only.
+--verbose                        Show per-item status lines during scan.
 ```
 
 ## Report Semantics
@@ -256,8 +309,8 @@ local behavior and dependency-risk baseline.
 | --- | --- | --- |
 | **LLM01: Prompt Injection** | Strong | Direct prompt injection, jailbreak/safety bypass, policy evasion, and RAG instruction-override payloads. |
 | **LLM02: Sensitive Information Disclosure** | Medium | PII extraction, PII leakage, sensitive data exfiltration, and private-context disclosure probes. |
-| **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV. |
-| **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, dataset, or model provenance checks yet. |
+| **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV and performs local model provenance checks. |
+| **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, or dataset lineage checks yet. |
 | **LLM05: Improper Output Handling** | Partial | Insecure code generation probes are included, but AegisLocal does not yet test downstream application sinks such as SQL, shell, browser, or HTML rendering contexts. |
 | **LLM06: Excessive Agency** | Partial | Tool-abuse prompts test model intent, but there is no real tool sandbox or agent execution simulation yet. |
 | **LLM07: System Prompt Leakage** | Strong | Dedicated system prompt extraction and hidden-instruction disclosure payloads. |
@@ -267,7 +320,7 @@ local behavior and dependency-risk baseline.
 
 The strongest current coverage areas are prompt injection, jailbreak behavior,
 system prompt leakage, sensitive information disclosure, insecure code
-generation, and basic Python dependency supply-chain risk.
+generation, Python dependency supply-chain risk, and model provenance hygiene.
 
 Planned expansion areas include richer RAG/vector tests, real tool-agent
 execution scenarios, misinformation checks, downstream output-handling tests,
@@ -318,6 +371,126 @@ remediation points the user to advisory-level mitigation or workaround guidance.
 Unsupported requirement or `pyproject.toml` dependency specs are reported as
 execution errors but do not stop the scan. Blank lines, full-line comments, and
 inline comments are ignored safely.
+
+## Model Provenance Scan Behavior
+
+AegisLocal also scans local model supply-chain signals. It discovers model
+references from CLI scan configuration, `.env`, JSON/YAML/TOML/text config
+files, Python source files, `Dockerfile`, and `Modelfile`. It also discovers
+local model artifacts with extensions such as `.gguf`, `.safetensors`, `.bin`,
+`.pt`, `.pth`, and `.ckpt`.
+
+Model supply-chain findings are reported under `static_findings` with category
+`Model Supply Chain`.
+
+The scanner reports risks such as the following. Each finding is meant to be
+reviewable, not automatically proof of compromise:
+
+| Finding | How to confirm it is expected |
+| --- | --- |
+| Model reference is not declared as approved | This appears only when `aegislocal.models.toml` exists, which means the project opted into approval-policy checks. Check the reported `source_file` and `source_line`. If the model is intentionally used by the app, add it to the manifest with `source`, `license`, and `approved = true`. If the file is a sample, test fixture, or stale config, remove it or exclude it from the scanned project root. |
+| Hugging Face model reference has no approved provenance entry | This appears only when `aegislocal.models.toml` exists. For official model releases, confirm the publisher, model card, license, and Hugging Face security scan status, then approve the release in the manifest. A commit `revision` is optional and useful for strict reproducibility, but it is not required to approve a stable official release such as `mistralai/Mistral-7B-Instruct-v0.3`. |
+| `trust_remote_code = True` | Confirm the model repo code is required and reviewed because this setting allows repository code to run locally. If it is not required, set it to `False`. If it is required, document the approval in your review process or in `aegislocal.models.toml`; use an exact commit revision when you need stronger reproducibility. |
+| Local model artifact has no approved SHA256 | This appears only when `aegislocal.models.toml` exists. Compute the local file digest with `shasum -a 256 path/to/model`, verify the file came from the intended source, then add `path`, `sha256`, `source`, `license`, and `approved = true` to the manifest. |
+| Local artifact uses `.bin`, `.pt`, `.pth`, or `.ckpt` | Confirm the loader and source are trusted. These formats are flagged because they are commonly pickle/deserialization-based. Prefer `.safetensors` or `.gguf` when possible. If you must use one of these formats, keep it pinned by SHA256 and treat it as a manually accepted risk. |
+| LoRA/adapter artifact has no declared base model | Confirm which base model the adapter was trained for. Add `base_model = "..."` to the `[[adapters]]` entry. If the adapter is stale or experimental, remove it from the scanned project root. |
+| Local artifact SHA256 does not match the approved manifest entry | Recompute the digest with `shasum -a 256 path/to/model`. If the file changed unexpectedly, restore the reviewed artifact. If the change was intentional, review the new artifact and update the manifest SHA only after approval. |
+| Manifest entry `path` is missing from disk | Check whether the artifact was moved, deleted, or not checked out. Restore the file at the declared path, update the manifest path, or remove the stale manifest entry. |
+
+`aegislocal.models.toml` is optional for `scan`. If the file is absent,
+AegisLocal still discovers models and reports concrete risks such as
+`trust_remote_code` and unsafe local formats, but it does not fail every
+discovered model for lacking local approval.
+
+Add `aegislocal.models.toml` only when you want AegisLocal to enforce a local
+approval policy for model references and artifacts. This file is an AegisLocal
+approval manifest, not an industry standard by itself. AegisLocal uses it as
+local policy input, then writes model inventory to CycloneDX AIBOM output.
+
+Use it when your application relies on a Hugging Face model, a local model file,
+or a LoRA/adapter that should be treated as approved. For local files, record
+the SHA256 so AegisLocal can detect later changes:
+
+```bash
+shasum -a 256 models/local-model.gguf
+```
+
+Example `aegislocal.models.toml`:
+
+```toml
+[[models]]
+name = "mistralai/Mistral-7B-Instruct-v0.3"
+source = "huggingface"
+revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+license = "apache-2.0"
+approved = true
+
+[[models]]
+name = "local-model"
+source = "local"
+path = "models/local-model.gguf"
+sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+license = "unknown"
+approved = true
+
+[[adapters]]
+name = "support-lora"
+source = "local"
+base_model = "local-model"
+path = "models/adapters/support-lora.safetensors"
+sha256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+approved = true
+```
+
+## SBOM/AIBOM Output
+
+AegisLocal can write separate CycloneDX JSON inventories for software packages
+and AI/model assets. Use `bom` when you want inventory only, without dynamic
+model testing or OSV vulnerability lookups:
+
+```bash
+uv run python main.py bom --project-root ~/dev/project --output bom.cdx.json
+```
+
+This writes:
+
+- `bom.sbom.cdx.json` for Python package inventory
+- `bom.aibom.cdx.json` for model, adapter, and provenance inventory
+
+The SBOM includes:
+
+- PyPI dependency components discovered by the static scanner
+
+The AIBOM includes:
+
+- model references discovered from CLI/config/code
+- local model and adapter artifacts with SHA256 hashes
+- approved model/adaptor metadata from `aegislocal.models.toml`
+- AegisLocal properties for source file, artifact type, model source, approval
+  status, format, and base model where available
+
+The `bom` command does not run dynamic payloads, does not call the target or
+judge model, and does not perform OSV vulnerability lookups. If you want to
+include a runtime model that is not present in local config, pass it explicitly:
+
+```bash
+uv run python main.py bom \
+  --project-root ~/dev/project \
+  --target-model llama3.1:8b \
+  --target-endpoint http://localhost:11434/v1/chat/completions \
+  --output bom.cdx.json
+```
+
+Inventory warnings, such as unsupported requirement lines, are reported but do
+not fail `bom` by default. Use `--strict` when CI should fail on incomplete
+inventory:
+
+```bash
+uv run python main.py bom --project-root ~/dev/project --output bom.cdx.json --strict
+```
+
+Use `scan` when you want security findings. Use `bom` when you want an
+inventory artifact for CI, audit, or handoff to another tool.
 
 ## Development
 

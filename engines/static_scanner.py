@@ -26,6 +26,7 @@ STATIC_CONCURRENCY = 10
 EXCLUDED_DIR_NAMES = {
     ".git",
     ".venv",
+    ".worktrees",
     "venv",
     "env",
     "node_modules",
