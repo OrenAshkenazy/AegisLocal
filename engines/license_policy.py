@@ -127,14 +127,13 @@ def evaluate_license(raw_license: str) -> Optional[LicenseDecision]:
 
     if OR_RE.search(without_exception):
         parts = [part.strip(" ()") for part in OR_RE.split(without_exception)]
-        if not any(_is_gpl_family(part) for part in parts):
-            return None
         if any(_is_permissive(part) for part in parts):
             return None
-        if all(_is_recognized_license(part) for part in parts):
+        gpl_license = _first_gpl_family(parts)
+        if gpl_license:
             return LicenseDecision(
                 should_warn=True,
-                license_id=_first_gpl_family(parts) or raw_license,
+                license_id=gpl_license,
                 softer_warning=bool(exception),
                 exception=exception,
             )
