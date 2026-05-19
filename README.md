@@ -318,7 +318,7 @@ and explicit resource-exhaustion probes.
 
 The static scanner recursively discovers supported Python dependency manifests
 while excluding common generated or noisy directories such as `.git`, `.venv`,
-`node_modules`, `dist`, `build`, and `tests/fixtures`.
+`.claude`, `.codex`, `node_modules`, `dist`, `build`, and `tests/fixtures`.
 
 Supported manifests:
 
@@ -358,6 +358,10 @@ from OSV's `severity` field. CVSS scores are mapped as:
 
 If OSV does not provide a supported severity value, AegisLocal falls back to
 `HIGH` so vulnerability findings are not silently downplayed.
+
+When OSV returns multiple advisories for the same package/version with the same
+fix, AegisLocal groups them into one static finding with `vulnerability_ids`.
+The grouped finding uses the highest severity among the advisories.
 
 Static findings include fixability metadata when OSV provides it:
 

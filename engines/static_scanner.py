@@ -25,6 +25,8 @@ OSV_TIMEOUT_SECONDS = 5
 STATIC_CONCURRENCY = 10
 
 EXCLUDED_DIR_NAMES = {
+    ".claude",
+    ".codex",
     ".git",
     ".venv",
     "venv",
@@ -44,6 +46,13 @@ SUPPORTED_EXACT_SPEC_RE = re.compile(
 )
 SUPPORTED_MANIFEST_NAMES = {"pyproject.toml", "uv.lock", "poetry.lock"}
 LOCKFILE_NAMES = {"uv.lock", "poetry.lock"}
+SEVERITY_RANK = {
+    Severity.INFO: 0,
+    Severity.LOW: 1,
+    Severity.MEDIUM: 2,
+    Severity.HIGH: 3,
+    Severity.CRITICAL: 4,
+}
 
 
 @dataclass(frozen=True)
@@ -580,6 +589,78 @@ def _round_up_1_decimal(value: float) -> float:
     return math.ceil((value - 1e-10) * 10) / 10
 
 
+def _merge_dependency_findings(findings: Iterable[Finding]) -> List[Finding]:
+    findings_by_key: dict[
+        tuple[Optional[str], Optional[str], Optional[str], Optional[str]],
+        Finding,
+    ] = {}
+    finding_order: List[tuple[Optional[str], Optional[str], Optional[str], Optional[str]]] = []
+    for finding in findings:
+        key = (
+            finding.package_name.lower() if finding.package_name else None,
+            finding.package_version,
+            finding.fixed_version,
+            finding.remediation,
+        )
+        existing = findings_by_key.get(key)
+        if existing is None:
+            findings_by_key[key] = finding
+            finding_order.append(key)
+            continue
+        findings_by_key[key] = _combine_dependency_findings(existing, finding)
+    return [findings_by_key[key] for key in finding_order]
+
+
+def _combine_dependency_findings(existing: Finding, new: Finding) -> Finding:
+    vulnerability_ids = _merge_vulnerability_ids(existing, new)
+    source_file = existing.source_file
+    if _source_priority(new.source_file) < _source_priority(existing.source_file):
+        source_file = new.source_file
+
+    severity = existing.severity
+    if SEVERITY_RANK[new.severity] > SEVERITY_RANK[existing.severity]:
+        severity = new.severity
+
+    return existing.model_copy(
+        update={
+            "severity": severity,
+            "description": _dependency_vulnerability_description(
+                existing.package_name,
+                existing.package_version,
+                vulnerability_ids,
+            ),
+            "vulnerability_id": vulnerability_ids[0] if vulnerability_ids else None,
+            "vulnerability_ids": vulnerability_ids if len(vulnerability_ids) > 1 else None,
+            "source_file": source_file,
+        }
+    )
+
+
+def _merge_vulnerability_ids(existing: Finding, new: Finding) -> List[str]:
+    vulnerability_ids: List[str] = []
+    for finding in (existing, new):
+        for vulnerability_id in finding.vulnerability_ids or []:
+            if vulnerability_id not in vulnerability_ids:
+                vulnerability_ids.append(vulnerability_id)
+        if finding.vulnerability_id and finding.vulnerability_id not in vulnerability_ids:
+            vulnerability_ids.append(finding.vulnerability_id)
+    return vulnerability_ids
+
+
+def _dependency_vulnerability_description(
+    package_name: Optional[str],
+    package_version: Optional[str],
+    vulnerability_ids: Sequence[str],
+) -> str:
+    package = f"{package_name}=={package_version}"
+    if len(vulnerability_ids) == 1:
+        return f"{package} is affected by {vulnerability_ids[0]}."
+    return (
+        f"{package} is affected by {len(vulnerability_ids)} vulnerabilities: "
+        f"{', '.join(vulnerability_ids)}."
+    )
+
+
 def _select_fixed_version(
     vuln: dict,
     package_name: str,
@@ -651,24 +732,11 @@ async def run_static_scan(
             *(_query_and_report(session, dependency, semaphore) for dependency in dependencies)
         )
 
-    findings_by_key: dict[tuple[Optional[str], Optional[str], Optional[str]], Finding] = {}
-    finding_order: List[tuple[Optional[str], Optional[str], Optional[str]]] = []
+    findings: List[Finding] = []
     for dependency_findings, dependency_errors in results:
-        for finding in dependency_findings:
-            key = (
-                finding.package_name,
-                finding.package_version,
-                finding.vulnerability_id,
-            )
-            existing = findings_by_key.get(key)
-            if existing is None:
-                findings_by_key[key] = finding
-                finding_order.append(key)
-                continue
-            if _source_priority(finding.source_file) < _source_priority(existing.source_file):
-                findings_by_key[key] = finding
+        findings.extend(dependency_findings)
         errors.extend(dependency_errors)
-    return [findings_by_key[key] for key in finding_order], errors
+    return _merge_dependency_findings(findings), errors
 
 
 __all__ = [

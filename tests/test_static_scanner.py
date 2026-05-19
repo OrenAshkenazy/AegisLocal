@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from pathlib import Path
 
 from core.models import Finding, Severity
 from engines.static_scanner import (
@@ -54,6 +53,14 @@ def test_discovery_excludes_tests_fixtures_and_virtualenv_dirs(tmp_path):
     venv = tmp_path / ".venv" / "requirements.txt"
     venv.parent.mkdir()
     venv.write_text("ignored==1.0.0", encoding="utf-8")
+
+    claude_worktree = tmp_path / ".claude" / "worktrees" / "copy" / "requirements.txt"
+    claude_worktree.parent.mkdir(parents=True)
+    claude_worktree.write_text("ignored==1.0.0", encoding="utf-8")
+
+    codex_worktree = tmp_path / ".codex" / "worktrees" / "copy" / "requirements.txt"
+    codex_worktree.parent.mkdir(parents=True)
+    codex_worktree.write_text("ignored==1.0.0", encoding="utf-8")
 
     assert discover_requirement_files(tmp_path) == [included]
 
@@ -337,3 +344,52 @@ def test_static_scan_dedupes_findings_across_sources_preferring_manifest(monkeyp
     assert errors == []
     assert len(findings) == 1
     assert findings[0].source_file == str(requirements)
+
+
+def test_static_scan_groups_same_package_fix_vulnerabilities(monkeypatch, tmp_path):
+    requirements = tmp_path / "requirements.txt"
+    dependencies = [Dependency("aiohttp", "3.13.3", requirements, 1)]
+
+    async def fake_query_osv(_session, dependency, _semaphore):
+        return [
+            Finding(
+                severity=Severity.LOW,
+                category="Dependency Vulnerability",
+                description=f"{dependency.name}=={dependency.version} is affected by CVE-2099-0001.",
+                remediation=f"Upgrade {dependency.name} from {dependency.version} to 3.13.4+.",
+                fix_available=True,
+                fixed_version="3.13.4",
+                package_name=dependency.name,
+                package_version=dependency.version,
+                vulnerability_id="CVE-2099-0001",
+                source_file=str(dependency.source_file),
+            ),
+            Finding(
+                severity=Severity.HIGH,
+                category="Dependency Vulnerability",
+                description=f"{dependency.name}=={dependency.version} is affected by CVE-2099-0002.",
+                remediation=f"Upgrade {dependency.name} from {dependency.version} to 3.13.4+.",
+                fix_available=True,
+                fixed_version="3.13.4",
+                package_name=dependency.name,
+                package_version=dependency.version,
+                vulnerability_id="CVE-2099-0002",
+                source_file=str(dependency.source_file),
+            ),
+        ], []
+
+    monkeypatch.setattr(static_scanner, "_query_osv", fake_query_osv)
+
+    findings, errors = asyncio.run(
+        static_scanner.run_static_scan(tmp_path, dependencies=dependencies)
+    )
+
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.HIGH
+    assert findings[0].vulnerability_id == "CVE-2099-0001"
+    assert findings[0].vulnerability_ids == ["CVE-2099-0001", "CVE-2099-0002"]
+    assert findings[0].description == (
+        "aiohttp==3.13.3 is affected by 2 vulnerabilities: "
+        "CVE-2099-0001, CVE-2099-0002."
+    )

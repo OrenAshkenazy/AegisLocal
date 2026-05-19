@@ -49,6 +49,7 @@ class Finding(BaseModel):
     package_name: Optional[str] = None
     package_version: Optional[str] = None
     vulnerability_id: Optional[str] = None
+    vulnerability_ids: Optional[List[str]] = None
     source_file: Optional[str] = None
     license_id: Optional[str] = None
     license_source: Optional[str] = None
