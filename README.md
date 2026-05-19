@@ -53,8 +53,7 @@ Pick the scan type that matches what you want to check:
 | Review dependency/model licenses | `uv run python main.py scan licenses` |
 | Run dependency, behavior, and license checks | `uv run python main.py scan all` |
 
-`scan licenses` auto-generates missing default BOM files before reviewing
-licenses:
+`scan licenses` regenerates the default BOM files before reviewing licenses:
 
 - `bom.sbom.cdx.json`
 - `bom.aibom.cdx.json`
@@ -396,10 +395,12 @@ Run it with one command:
 uv run python main.py scan licenses
 ```
 
-If `bom.sbom.cdx.json` or `bom.aibom.cdx.json` does not exist, AegisLocal
-generates the missing file before reviewing licenses. Existing files are reused.
-The JSON output for `scan licenses` is focused on `license_findings` and
-`license_coverage`; model endpoint and dynamic-scan fields are omitted.
+When using the default `bom.sbom.cdx.json` and `bom.aibom.cdx.json` paths,
+AegisLocal regenerates both files before reviewing licenses so the inventory
+matches the current project. Explicit files passed with `--sbom` or `--aibom`
+are treated as user-supplied evidence and are not overwritten. The JSON output
+for `scan licenses` is focused on `license_findings` and `license_coverage`;
+model endpoint and dynamic-scan fields are omitted.
 
 The generated BOM files inventory dependencies and models. License values come
 from, in priority order, explicit SBOM/AIBOM metadata, then the local cache. The

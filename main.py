@@ -301,23 +301,23 @@ def _prepare_license_boms(
     resolved_sbom = _resolve_bom_path(project_root, sbom_file, DEFAULT_SBOM_FILE)
     resolved_aibom = _resolve_bom_path(project_root, aibom_file, DEFAULT_AIBOM_FILE)
 
-    if generate_bom and not resolved_sbom.exists():
+    if generate_bom and sbom_file is None:
         write_sbom(
             project_root=project_root,
             dependencies=dependencies,
             output_path=resolved_sbom,
             scanner_version=_get_version(),
         )
-        typer.echo(f"Generated missing SBOM: {resolved_sbom}", err=True)
+        typer.echo(f"Generated SBOM: {resolved_sbom}", err=True)
 
-    if generate_bom and not resolved_aibom.exists():
+    if generate_bom and aibom_file is None:
         write_aibom(
             project_root=project_root,
             model_names=model_names,
             output_path=resolved_aibom,
             scanner_version=_get_version(),
         )
-        typer.echo(f"Generated missing AIBOM: {resolved_aibom}", err=True)
+        typer.echo(f"Generated AIBOM: {resolved_aibom}", err=True)
 
     return (
         resolved_sbom if resolved_sbom.exists() else None,
