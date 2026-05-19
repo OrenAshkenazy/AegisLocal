@@ -407,6 +407,8 @@ default enrichment step fills the local cache when metadata is missing:
 
 - Python packages: `deps.dev`, then PyPI release metadata.
 - Hugging Face models: Hugging Face model metadata/model-card license fields.
+- Bare model names without `/` or `:`: best-effort Hugging Face search, used
+  only when exactly one repo has the same basename.
 - Ollama-style local model names: left as missing unless supplied in cache or
   AIBOM metadata.
 

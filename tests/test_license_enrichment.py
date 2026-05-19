@@ -85,3 +85,46 @@ async def test_enrich_license_metadata_writes_dependency_and_model_cache(
     )
     assert cache["models"]["huggingface:org/model"]["raw_license"] == "AGPL-3.0-only"
     assert "ollama:llama3.1:8b" not in cache["models"]
+
+
+async def test_enrich_license_metadata_resolves_unique_huggingface_basename(
+    monkeypatch,
+    tmp_path,
+):
+    async def fake_fetch_json_list(_session, _semaphore, _url):
+        return [
+            {"id": "nomic-ai/gpt4all-lora-epoch-3"},
+            {"id": "nomic-ai/gpt4all-lora"},
+        ]
+
+    async def fake_huggingface_entry(_session, _semaphore, model_name):
+        return {
+            "license_id": "gpl-3.0",
+            "raw_license": "gpl-3.0",
+            "source": "huggingface",
+            "source_url": f"https://huggingface.co/{model_name}",
+        }
+
+    monkeypatch.setattr(license_enrichment, "_fetch_json_list", fake_fetch_json_list)
+    monkeypatch.setattr(
+        license_enrichment,
+        "_huggingface_license_entry",
+        fake_huggingface_entry,
+    )
+
+    errors = await enrich_license_metadata(
+        project_root=tmp_path,
+        dependencies=[],
+        model_names=["gpt4all-lora"],
+    )
+
+    cache = json.loads(
+        (tmp_path / ".aegislocal" / "license-metadata-cache.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert errors == []
+    assert cache["models"]["ollama:gpt4all-lora"]["raw_license"] == "gpl-3.0"
+    assert cache["models"]["ollama:gpt4all-lora"]["resolved_model"] == (
+        "nomic-ai/gpt4all-lora"
+    )

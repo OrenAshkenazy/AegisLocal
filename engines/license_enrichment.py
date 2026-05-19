@@ -17,6 +17,7 @@ from engines.static_scanner import Dependency
 DEPS_DEV_VERSION_URL = "https://api.deps.dev/v3/systems/PYPI/packages/{name}/versions/{version}"
 PYPI_RELEASE_URL = "https://pypi.org/pypi/{name}/{version}/json"
 HF_MODEL_URL = "https://huggingface.co/api/models/{model_name}"
+HF_MODEL_SEARCH_URL = "https://huggingface.co/api/models?search={model_name}&limit=10"
 LICENSE_ENRICH_TIMEOUT_SECONDS = 10
 LICENSE_ENRICH_CONCURRENCY = 8
 
@@ -136,10 +137,41 @@ async def _enrich_model(
     semaphore: asyncio.Semaphore,
     model_name: str,
 ) -> tuple[str, Optional[dict]]:
+    resolved_model_name = model_name
     if "/" not in model_name:
-        return model_name, None
-    entry = await _huggingface_license_entry(session, semaphore, model_name)
+        if ":" in model_name:
+            return model_name, None
+        resolved_model_name = await _resolve_huggingface_model_name(
+            session,
+            semaphore,
+            model_name,
+        )
+        if resolved_model_name is None:
+            return model_name, None
+    entry = await _huggingface_license_entry(session, semaphore, resolved_model_name)
+    if entry is not None and resolved_model_name != model_name:
+        entry["resolved_model"] = resolved_model_name
     return model_name, entry
+
+
+async def _resolve_huggingface_model_name(
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
+    model_name: str,
+) -> Optional[str]:
+    url = HF_MODEL_SEARCH_URL.format(model_name=quote(model_name, safe=""))
+    data = await _fetch_json_list(session, semaphore, url)
+    if data is None:
+        return None
+    exact_matches = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        repo_id = str(item.get("id") or "").strip()
+        if repo_id.rsplit("/", 1)[-1] == model_name:
+            exact_matches.append(repo_id)
+    unique_matches = list(dict.fromkeys(exact_matches))
+    return unique_matches[0] if len(unique_matches) == 1 else None
 
 
 async def _deps_dev_license_entry(
@@ -231,6 +263,22 @@ async def _fetch_json(
         except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError):
             return None
     return data if isinstance(data, dict) else None
+
+
+async def _fetch_json_list(
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
+    url: str,
+) -> Optional[list]:
+    async with semaphore:
+        try:
+            async with session.get(url) as response:
+                if response.status >= 400:
+                    return None
+                data = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError, json.JSONDecodeError):
+            return None
+    return data if isinstance(data, list) else None
 
 
 def _license_from_pypi_info(info: dict) -> Optional[str]:
