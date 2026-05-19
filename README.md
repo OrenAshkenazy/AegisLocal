@@ -164,6 +164,9 @@ ollama pull llama3.2:1b
 --sbom PATH                      CycloneDX SBOM JSON with dependency licenses.
 --aibom PATH                     CycloneDX-style AIBOM JSON with model licenses.
 --license-cache PATH             Local license metadata cache JSON.
+--license-enrich / --no-license-enrich
+                                  Fetch missing license metadata from public
+                                  package/model APIs and cache it locally.
 --generate-bom / --no-generate-bom
                                   Generate missing default SBOM/AIBOM files for
                                   License Policy Review.
@@ -383,9 +386,9 @@ inline comments are ignored safely.
 
 ## License Policy Review
 
-License Policy Review checks dependency and model license metadata from local
-evidence sources only. It does not perform one network lookup per package or
-model during the normal scan.
+License Policy Review checks dependency and model license metadata. By default,
+it enriches missing metadata from public APIs and stores the result in
+`.aegislocal/license-metadata-cache.json` for deterministic later runs.
 
 Run it with one command:
 
@@ -398,6 +401,15 @@ generates the missing file before reviewing licenses. Existing files are reused.
 The JSON output for `scan licenses` is focused on `license_findings` and
 `license_coverage`; model endpoint and dynamic-scan fields are omitted.
 
+The generated BOM files inventory dependencies and models. License values come
+from, in priority order, explicit SBOM/AIBOM metadata, then the local cache. The
+default enrichment step fills the local cache when metadata is missing:
+
+- Python packages: `deps.dev`, then PyPI release metadata.
+- Hugging Face models: Hugging Face model metadata/model-card license fields.
+- Ollama-style local model names: left as missing unless supplied in cache or
+  AIBOM metadata.
+
 Advanced users can pass explicit local evidence files:
 
 ```bash
@@ -409,6 +421,15 @@ uv run python main.py scan licenses \
 
 Use `--no-generate-bom` when CI should rely only on BOM files that already
 exist. Missing license metadata is then reported as coverage gaps.
+
+Use `--no-license-enrich` when CI should avoid network access and rely only on
+existing SBOM/AIBOM/cache evidence:
+
+```bash
+uv run python main.py scan licenses \
+  --project-root /path/to/project \
+  --no-license-enrich
+```
 
 The review currently warns on GPL-family licenses:
 

@@ -18,6 +18,7 @@ from engines.dynamic_fuzzer import (
     load_payloads,
     run_dynamic_scan,
 )
+from engines.license_enrichment import enrich_license_metadata
 from engines.license_policy import run_license_policy_review
 from engines.static_scanner import (
     discover_manifest_files,
@@ -143,6 +144,7 @@ async def run_scan(
     run_static: bool,
     run_dynamic: bool,
     license_scan: bool,
+    license_enrich: bool,
     generate_bom: bool,
     sbom_file: Optional[Path],
     aibom_file: Optional[Path],
@@ -179,7 +181,16 @@ async def run_scan(
             aibom_file=aibom_file,
             generate_bom=generate_bom,
         )
-        license_findings, license_coverage, license_errors = run_license_policy_review(
+        if license_enrich:
+            license_errors.extend(
+                await enrich_license_metadata(
+                    project_root=project_root,
+                    dependencies=deps,
+                    model_names=scanned_models,
+                    license_cache_path=license_cache_file,
+                )
+            )
+        policy_findings, license_coverage, policy_errors = run_license_policy_review(
             project_root=project_root,
             dependencies=deps,
             model_names=scanned_models,
@@ -187,6 +198,8 @@ async def run_scan(
             aibom_path=aibom_file,
             license_cache_path=license_cache_file,
         )
+        license_findings = policy_findings
+        license_errors.extend(policy_errors)
 
     dynamic_findings = []
     dynamic_errors = []
@@ -388,7 +401,7 @@ def scan(
     license_scan: bool = typer.Option(
         False,
         "--license-scan/--no-license-scan",
-        help="Run License Policy Review using local SBOM/AIBOM/cache metadata.",
+        help="Run License Policy Review using SBOM/AIBOM/cache metadata.",
     ),
     sbom_file: Optional[Path] = typer.Option(
         None,
@@ -404,6 +417,11 @@ def scan(
         None,
         "--license-cache",
         help="Local License Policy Review metadata cache JSON file.",
+    ),
+    license_enrich: bool = typer.Option(
+        True,
+        "--license-enrich/--no-license-enrich",
+        help="Fetch missing license metadata from public package/model APIs and cache it locally.",
     ),
     generate_bom: bool = typer.Option(
         True,
@@ -455,6 +473,7 @@ def scan(
             run_static=run_static,
             run_dynamic=run_dynamic,
             license_scan=effective_license_scan,
+            license_enrich=license_enrich,
             generate_bom=generate_bom and effective_generate_bom,
             sbom_file=sbom_file,
             aibom_file=aibom_file,

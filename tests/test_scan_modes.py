@@ -25,6 +25,7 @@ async def test_license_scan_mode_generates_missing_boms(tmp_path):
         run_static=False,
         run_dynamic=False,
         license_scan=True,
+        license_enrich=False,
         generate_bom=True,
         sbom_file=None,
         aibom_file=None,
