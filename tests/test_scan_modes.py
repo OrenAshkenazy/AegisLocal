@@ -1,6 +1,8 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, run_scan
 from core.console import ScanConsole
 from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
@@ -167,3 +169,42 @@ async def test_license_scan_mode_does_not_overwrite_explicit_boms(tmp_path):
 
     assert explicit_sbom.read_text(encoding="utf-8") == "not json"
     assert explicit_aibom.read_text(encoding="utf-8") == "not json"
+
+
+async def test_license_scan_mode_expands_project_root_for_default_boms(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    project = home / "dev" / "familia-ai"
+    project.mkdir(parents=True)
+    (project / "requirements.txt").write_text("requests==2.20.0", encoding="utf-8")
+    cwd = tmp_path / "runner"
+    cwd.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(cwd)
+
+    await run_scan(
+        project_root=Path("~/dev/familia-ai"),
+        payload_file=tmp_path / "missing-payloads.json",
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        run_static=False,
+        run_dynamic=False,
+        license_scan=True,
+        license_enrich=False,
+        generate_bom=True,
+        sbom_file=None,
+        aibom_file=None,
+        license_cache_file=None,
+        console=ScanConsole(quiet=True),
+    )
+
+    assert (project / "bom.sbom.cdx.json").exists()
+    assert (project / "bom.aibom.cdx.json").exists()
+    assert not (cwd / "~" / "dev" / "familia-ai" / "bom.sbom.cdx.json").exists()
+    assert not (cwd / "bom.sbom.cdx.json").exists()

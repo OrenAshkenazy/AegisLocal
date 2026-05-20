@@ -153,6 +153,7 @@ async def run_scan(
     console: ScanConsole,
 ) -> ScanReport:
     start = time.monotonic()
+    project_root = project_root.expanduser().resolve()
 
     # Parse once, pass to engines to avoid redundant I/O
     manifest_files = discover_manifest_files(project_root)
@@ -327,6 +328,7 @@ def _prepare_license_boms(
 
 def _resolve_bom_path(project_root: Path, path: Optional[Path], default_name: str) -> Path:
     selected = path or Path(default_name)
+    selected = selected.expanduser()
     return selected if selected.is_absolute() else project_root / selected
 
 
