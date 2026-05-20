@@ -32,17 +32,38 @@ class ErrorSource(str, Enum):
     CONFIG = "config"
 
 
+class FindingAction(str, Enum):
+    FAIL = "FAIL"
+    WARN = "WARN"
+    INFO = "INFO"
+
+
 class Finding(BaseModel):
     severity: Severity
     category: str
     description: str
+    action: FindingAction = FindingAction.FAIL
     remediation: Optional[str] = None
     fix_available: Optional[bool] = None
     fixed_version: Optional[str] = None
     package_name: Optional[str] = None
     package_version: Optional[str] = None
     vulnerability_id: Optional[str] = None
+    vulnerability_ids: Optional[List[str]] = None
     source_file: Optional[str] = None
+    license_id: Optional[str] = None
+    license_source: Optional[str] = None
+    subject_type: Optional[str] = None
+    subject_name: Optional[str] = None
+
+
+class LicenseCoverage(BaseModel):
+    dependencies_total: int = 0
+    dependencies_with_license_metadata: int = 0
+    dependencies_missing_license_metadata: int = 0
+    models_total: int = 0
+    models_with_license_metadata: int = 0
+    models_missing_license_metadata: int = 0
 
 
 class GroupedFinding(BaseModel):
@@ -84,21 +105,24 @@ class Payload(BaseModel):
 
 
 class ScanReport(BaseModel):
-    target_endpoint: HttpUrl
-    target_model: str
-    target_timeout_seconds: float
-    dynamic_concurrency: int
-    judge_endpoint: HttpUrl
-    judge_model: str
+    scan_type: str = "all"
+    target_endpoint: Optional[HttpUrl] = None
+    target_model: Optional[str] = None
+    target_timeout_seconds: Optional[float] = None
+    dynamic_concurrency: Optional[int] = None
+    judge_endpoint: Optional[HttpUrl] = None
+    judge_model: Optional[str] = None
     fallback_judge_endpoint: Optional[HttpUrl] = None
     fallback_judge_model: Optional[str] = None
-    include_evidence: bool = False
+    include_evidence: Optional[bool] = None
     security_result: SecurityResult
     execution_status: ExecutionStatus
     status_message: str
-    static_findings: List[Finding] = Field(default_factory=list)
-    dynamic_findings: List[GroupedFinding] = Field(default_factory=list)
-    dynamic_evidence: List[DynamicEvidence] = Field(default_factory=list)
+    static_findings: Optional[List[Finding]] = None
+    dynamic_findings: Optional[List[GroupedFinding]] = None
+    dynamic_evidence: Optional[List[DynamicEvidence]] = None
+    license_findings: Optional[List[Finding]] = None
+    license_coverage: Optional[LicenseCoverage] = None
     execution_errors: List[ExecutionError] = Field(default_factory=list)
     passed_audit: bool
     scan_duration_seconds: float = 0.0

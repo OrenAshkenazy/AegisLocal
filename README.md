@@ -42,6 +42,22 @@ The default model endpoint is:
 http://localhost:11434/v1/chat/completions
 ```
 
+## TL;DR
+
+Pick the scan type that matches what you want to check:
+
+| Goal | Command |
+| --- | --- |
+| Check Python dependency vulnerabilities | `uv run python main.py scan static` |
+| Test local model behavior | `uv run python main.py scan dynamic --target-model llama3.1:8b` |
+| Review dependency/model licenses | `uv run python main.py scan licenses` |
+| Run dependency, behavior, and license checks | `uv run python main.py scan all` |
+
+`scan licenses` regenerates the default BOM files before reviewing licenses:
+
+- `bom.sbom.cdx.json`
+- `bom.aibom.cdx.json`
+
 ## Installation
 
 From the repository root:
@@ -59,14 +75,22 @@ uv run python main.py --help
 
 ## Running a Scan
 
-Basic scan:
+Recommended commands:
+
+```bash
+uv run python main.py scan static
+uv run python main.py scan dynamic --target-model llama3.1:8b
+uv run python main.py scan licenses
+uv run python main.py scan all
+```
+
+The legacy command still works:
 
 ```bash
 uv run python main.py scan
 ```
 
-This scans the current directory, loads payloads from `data/payloads.json`, and
-uses the default local Ollama-compatible chat completions endpoint.
+It runs the original combined static and dynamic scan.
 
 Example with explicit models:
 
@@ -120,6 +144,7 @@ ollama pull llama3.2:1b
 ## CLI Options
 
 ```text
+[static|dynamic|licenses|all]     Optional scan type.
 --project-root PATH              Project root to recursively scan.
 --payload-file PATH              Dynamic payload JSON file.
 --target-endpoint TEXT           Target chat-completions endpoint.
@@ -132,6 +157,18 @@ ollama pull llama3.2:1b
 --fallback-judge-model TEXT      Optional fallback judge model.
 --include-evidence               Include sanitized evidence for failed or
                                   unknown dynamic payloads.
+--license-scan / --no-license-scan
+                                  Run License Policy Review using local
+                                  SBOM/AIBOM/cache metadata.
+--sbom PATH                      CycloneDX SBOM JSON with dependency licenses.
+--aibom PATH                     CycloneDX-style AIBOM JSON with model licenses.
+--license-cache PATH             Local license metadata cache JSON.
+--license-enrich / --no-license-enrich
+                                  Fetch missing license metadata from public
+                                  package/model APIs and cache it locally.
+--generate-bom / --no-generate-bom
+                                  Generate missing default SBOM/AIBOM files for
+                                  License Policy Review.
 ```
 
 ## Report Semantics
@@ -140,14 +177,17 @@ AegisLocal separates confirmed security outcomes from scan reliability:
 
 - `security_result`: `PASS`, `FAIL`, or `UNKNOWN`
 - `execution_status`: `COMPLETE` or `SCAN_INCOMPLETE`
-- `passed_audit`: `true` only when the scan completed and no findings were
-  found
+- `passed_audit`: `true` only when the scan completed without failing findings
 
 Execution errors are printed to stderr while the scan runs and are also included
 in the JSON report under `execution_errors`.
 
 Dynamic findings are grouped by category and include counts plus payload IDs.
 Raw model responses are not included by default.
+
+Static findings include an `action` field. Dependency vulnerabilities use
+`FAIL`; License Policy Review findings use `WARN`, so warning-only license
+results do not fail the audit by default.
 
 For debugging, use `--include-evidence` to include sanitized, truncated prompt
 and target response excerpts for failed or unknown dynamic payloads:
@@ -182,6 +222,9 @@ Example incomplete report fields:
 - `0`: scan completed and passed
 - nonzero: confirmed findings, incomplete scan, or validation/configuration
   failure
+
+License Policy Review warnings alone keep exit code `0`. They are policy-review
+signals, not vulnerability failures.
 
 This makes the scanner suitable for CI gates while avoiding confusion between
 security failures and infrastructure problems.
@@ -277,7 +320,8 @@ and explicit resource-exhaustion probes.
 
 The static scanner recursively discovers supported Python dependency manifests
 while excluding common generated or noisy directories such as `.git`, `.venv`,
-`node_modules`, `dist`, `build`, and `tests/fixtures`.
+`.claude`, `.codex`, `.worktrees`, `node_modules`, `dist`, `build`, and
+`tests/fixtures`.
 
 Supported manifests:
 
@@ -300,7 +344,27 @@ For `uv.lock` and `poetry.lock`, package versions are already resolved, so
 AegisLocal reads the resolved package entries directly.
 
 When a lockfile and `pyproject.toml` are present in the same directory,
-AegisLocal prefers the lockfile as the source of truth.
+AegisLocal prefers the lockfile as the source of truth. If the same
+package/version is discovered from multiple files, AegisLocal audits it once
+and prefers the direct manifest path, such as `requirements.txt`, in the
+reported finding.
+
+Dependency vulnerability severity is derived from OSV metadata when available.
+AegisLocal first uses an advisory severity label, then a CVSS v3 score or vector
+from OSV's `severity` field. CVSS scores are mapped as:
+
+- `CRITICAL`: 9.0-10.0
+- `HIGH`: 7.0-8.9
+- `MEDIUM`: 4.0-6.9
+- `LOW`: 0.1-3.9
+- `INFO`: 0.0
+
+If OSV does not provide a supported severity value, AegisLocal falls back to
+`HIGH` so vulnerability findings are not silently downplayed.
+
+When OSV returns multiple advisories for the same package/version with the same
+fix, AegisLocal groups them into one static finding with `vulnerability_ids`.
+The grouped finding uses the highest severity among the advisories.
 
 Static findings include fixability metadata when OSV provides it:
 
@@ -318,6 +382,101 @@ remediation points the user to advisory-level mitigation or workaround guidance.
 Unsupported requirement or `pyproject.toml` dependency specs are reported as
 execution errors but do not stop the scan. Blank lines, full-line comments, and
 inline comments are ignored safely.
+
+## License Policy Review
+
+License Policy Review checks dependency and model license metadata. By default,
+it enriches missing metadata from public APIs and stores the result in
+`.aegislocal/license-metadata-cache.json` for deterministic later runs.
+
+Run it with one command:
+
+```bash
+uv run python main.py scan licenses
+```
+
+When using the default `bom.sbom.cdx.json` and `bom.aibom.cdx.json` paths,
+AegisLocal regenerates both files before reviewing licenses so the inventory
+matches the current project. Explicit files passed with `--sbom` or `--aibom`
+are treated as user-supplied evidence and are not overwritten. The JSON output
+for `scan licenses` is focused on `license_findings` and `license_coverage`;
+model endpoint and dynamic-scan fields are omitted.
+
+The generated BOM files inventory dependencies and models. License values come
+from, in priority order, explicit SBOM/AIBOM metadata, then the local cache. The
+default enrichment step fills the local cache when metadata is missing:
+
+- Python packages: `deps.dev`, then PyPI release metadata.
+- Hugging Face models: Hugging Face model metadata/model-card license fields.
+- Bare model names without `/` or `:`: best-effort Hugging Face search, used
+  only when exactly one repo has the same basename.
+- Ollama-style local model names: left as missing unless supplied in cache or
+  AIBOM metadata.
+
+For license-only scans, model inventory comes from project `.env` files such as
+`AI_MAIN_MODEL`, `AI_INSIGHT_MODEL`, or `AI_GUARD_MODEL`. The dynamic-scan
+default target/judge model is not added to the AIBOM unless a dynamic scan is
+actually running.
+
+Advanced users can pass explicit local evidence files:
+
+```bash
+uv run python main.py scan licenses \
+  --sbom path/to/bom.sbom.cdx.json \
+  --aibom path/to/bom.aibom.cdx.json \
+  --license-cache path/to/license-metadata-cache.json
+```
+
+Use `--no-generate-bom` when CI should rely only on BOM files that already
+exist. Missing license metadata is then reported as coverage gaps.
+
+Use `--no-license-enrich` when CI should avoid network access and rely only on
+existing SBOM/AIBOM/cache evidence:
+
+```bash
+uv run python main.py scan licenses \
+  --project-root /path/to/project \
+  --no-license-enrich
+```
+
+The review currently warns on GPL-family licenses:
+
+- `GPL-*`
+- `AGPL-*`
+- `LGPL-*`
+
+These are `MEDIUM` `WARN` findings. They mean the dependency or model may need
+review against your organization's policy; they do not mean the item is
+malicious, vulnerable, or illegal to use.
+
+The report includes license metadata coverage when `--license-scan` is enabled:
+
+```json
+{
+  "license_coverage": {
+    "dependencies_total": 42,
+    "dependencies_with_license_metadata": 31,
+    "dependencies_missing_license_metadata": 11,
+    "models_total": 2,
+    "models_with_license_metadata": 1,
+    "models_missing_license_metadata": 1
+  }
+}
+```
+
+Source precedence is deterministic:
+
+1. SBOM for dependency licenses.
+2. AIBOM for model licenses.
+3. `.aegislocal/license-metadata-cache.json` or `--license-cache`.
+
+If SBOM/AIBOM metadata conflicts with cache metadata, SBOM/AIBOM wins. If two
+same-priority sources conflict, AegisLocal emits a non-blocking `License
+Metadata Conflict` warning and does not make a GPL-family policy decision for
+that subject.
+
+The local license cache is user-supplied evidence for deterministic CI. It is
+not authoritative proof of the upstream license.
 
 ## Development
 
