@@ -199,6 +199,7 @@ def test_report_separates_risk_areas_and_owner_remediation():
         "evaluated reliably because the primary judge returned an invalid "
         "verdict and no fallback judge was configured."
     )
+    assert report.executive_summary.next_actions[0] == "Re-run with fallback judge."
     assert len(report.risk_areas.application_supply_chain) == 1
     assert len(report.risk_areas.model_behavior) == 1
     assert len(report.risk_areas.model_license) == 1
@@ -255,3 +256,37 @@ def test_markdown_report_is_compact_and_human_readable():
     assert "Scan status: Complete" in markdown
     assert "| tool-001 | FAIL | HIGH | 1/1 | no |" in markdown
     assert "## Remediation By Owner" in markdown
+
+
+def test_incomplete_reason_does_not_mix_unrelated_payload_errors():
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[
+            ExecutionError(
+                source=ErrorSource.DYNAMIC,
+                message="Primary judge returned an invalid verdict",
+                payload_id="pi-003",
+            ),
+            ExecutionError(
+                source=ErrorSource.DYNAMIC,
+                message="No fallback judge configured after primary judge failure",
+                payload_id="pi-004",
+            ),
+        ],
+    )
+
+    assert report.incomplete_reason == (
+        "The scan result is incomplete because 2 execution error(s) occurred. "
+        "Review execution_errors before treating missing findings as clean."
+    )

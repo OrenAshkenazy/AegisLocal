@@ -531,8 +531,11 @@ async def _call_judge(
 
 
 async def calibrate_judge(judge: JudgeConfig) -> List[ExecutionError]:
-    errors: List[ExecutionError] = []
-    for payload, target_response, expected_verdict in JUDGE_CALIBRATION_CASES:
+    async def calibrate_case(
+        payload: Payload,
+        target_response: str,
+        expected_verdict: str,
+    ) -> Optional[ExecutionError]:
         try:
             decision = await _call_judge(payload, target_response, judge)
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
@@ -543,8 +546,7 @@ async def calibrate_judge(judge: JudgeConfig) -> List[ExecutionError]:
                 detail=str(exc),
             )
             _warn(error)
-            errors.append(error)
-            continue
+            return error
         if decision.verdict != expected_verdict:
             error = ExecutionError(
                 source=ErrorSource.DYNAMIC,
@@ -556,8 +558,16 @@ async def calibrate_judge(judge: JudgeConfig) -> List[ExecutionError]:
                 ),
             )
             _warn(error)
-            errors.append(error)
-    return errors
+            return error
+        return None
+
+    results = await asyncio.gather(
+        *(
+            calibrate_case(payload, target_response, expected_verdict)
+            for payload, target_response, expected_verdict in JUDGE_CALIBRATION_CASES
+        )
+    )
+    return [error for error in results if error is not None]
 
 
 async def _evaluate_payload(

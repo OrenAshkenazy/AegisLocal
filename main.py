@@ -329,25 +329,24 @@ def _build_incomplete_reason(
     if not execution_errors:
         return None
 
-    invalid_payload_ids = sorted(
-        {
-            error.payload_id
-            for error in execution_errors
-            if error.payload_id and "invalid verdict" in error.message.lower()
-        }
-    )
+    invalid_payload_ids = {
+        error.payload_id
+        for error in execution_errors
+        if error.payload_id and "invalid verdict" in error.message.lower()
+    }
     no_fallback_payload_ids = {
         error.payload_id
         for error in execution_errors
         if error.payload_id and "no fallback judge" in error.message.lower()
     }
-    if invalid_payload_ids and no_fallback_payload_ids:
+    invalid_with_no_fallback = sorted(invalid_payload_ids & no_fallback_payload_ids)
+    if invalid_with_no_fallback:
         prefix = (
             "The scan found confirmed failures, but "
             if has_confirmed_findings
             else "The scan could not complete because "
         )
-        payload_text = ", ".join(invalid_payload_ids)
+        payload_text = ", ".join(invalid_with_no_fallback)
         return (
             f"{prefix}payload {payload_text} could not be evaluated reliably because "
             "the primary judge returned an invalid verdict and no fallback judge was configured."
@@ -422,9 +421,9 @@ def _build_executive_summary(
         action
         for remediation in owner_remediation
         for action in remediation.actions
-    ][:5]
+    ]
     if incomplete_reason and "fallback judge" in incomplete_reason.lower():
-        next_actions.append("Re-run with fallback judge.")
+        next_actions.insert(0, "Re-run with fallback judge.")
     reason = _decision_reason(decision, risk_areas, incomplete_reason)
     return ExecutiveSummary(
         decision=decision,
