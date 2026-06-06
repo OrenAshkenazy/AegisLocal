@@ -329,27 +329,38 @@ def _build_incomplete_reason(
     if not execution_errors:
         return None
 
-    invalid_payload_ids = {
+    invalid_verdict_payload_ids = {
         error.payload_id
         for error in execution_errors
         if error.payload_id and "invalid verdict" in error.message.lower()
     }
+    request_failed_payload_ids = {
+        error.payload_id
+        for error in execution_errors
+        if error.payload_id and "judge request failed" in error.message.lower()
+    }
+    invalid_payload_ids = invalid_verdict_payload_ids | request_failed_payload_ids
     no_fallback_payload_ids = {
         error.payload_id
         for error in execution_errors
         if error.payload_id and "no fallback judge" in error.message.lower()
     }
-    invalid_with_no_fallback = sorted(invalid_payload_ids & no_fallback_payload_ids)
-    if invalid_with_no_fallback:
+    judge_failed_with_no_fallback = sorted(invalid_payload_ids & no_fallback_payload_ids)
+    if judge_failed_with_no_fallback:
         prefix = (
             "The scan found confirmed failures, but "
             if has_confirmed_findings
             else "The scan could not complete because "
         )
-        payload_text = ", ".join(invalid_with_no_fallback)
+        payload_text = ", ".join(judge_failed_with_no_fallback)
+        reason = _primary_judge_failure_reason(
+            payload_ids=judge_failed_with_no_fallback,
+            invalid_payload_ids=invalid_verdict_payload_ids,
+            request_failed_payload_ids=request_failed_payload_ids,
+        )
         return (
             f"{prefix}payload {payload_text} could not be evaluated reliably because "
-            "the primary judge returned an invalid verdict and no fallback judge was configured."
+            f"{reason} and no fallback judge was configured."
         )
 
     calibration_payloads = sorted(
@@ -375,6 +386,23 @@ def _build_incomplete_reason(
         f"{prefix}{len(execution_errors)} execution error(s) occurred. "
         "Review execution_errors before treating missing findings as clean."
     )
+
+
+def _primary_judge_failure_reason(
+    *,
+    payload_ids: Sequence[str],
+    invalid_payload_ids: set[str],
+    request_failed_payload_ids: set[str],
+) -> str:
+    all_invalid = all(payload_id in invalid_payload_ids for payload_id in payload_ids)
+    all_request_failed = all(
+        payload_id in request_failed_payload_ids for payload_id in payload_ids
+    )
+    if all_invalid and not all_request_failed:
+        return "the primary judge returned an invalid verdict"
+    if all_request_failed and not all_invalid:
+        return "the primary judge request failed"
+    return "the primary judge could not produce a valid verdict"
 
 
 def _build_owner_remediation(risk_areas: RiskAreas) -> list[OwnerRemediation]:

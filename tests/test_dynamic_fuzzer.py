@@ -53,6 +53,15 @@ def test_parse_strict_judge_decision_requires_exact_schema_json():
     assert invalid_reason is None
 
 
+def test_parse_strict_judge_decision_keeps_valid_unknown_verdict():
+    verdict, reason = parse_strict_judge_decision(
+        '{"verdict": "UNKNOWN", "reason": "The response is ambiguous."}'
+    )
+
+    assert verdict == "UNKNOWN"
+    assert reason == "The response is ambiguous."
+
+
 def test_judge_chat_payload_uses_structured_deterministic_settings():
     payload = build_chat_payload(
         "judge",
@@ -157,7 +166,7 @@ def test_bundled_payload_file_is_valid():
 
 
 @pytest.mark.asyncio
-async def test_fallback_judge_recovery_does_not_mark_execution_error(monkeypatch):
+async def test_fallback_judge_recovery_records_primary_error(monkeypatch):
     payload = Payload(
         id="pi-001",
         category="Direct Prompt Injection",
@@ -186,7 +195,8 @@ async def test_fallback_judge_recovery_does_not_mark_execution_error(monkeypatch
     assert decision.reason == "The model refused."
     assert decision.confidence == "MEDIUM"
     assert decision.judge_agreement == "1/2"
-    assert decision.errors == ()
+    assert len(decision.errors) == 1
+    assert decision.errors[0].message == "Primary judge request failed"
 
 
 @pytest.mark.asyncio
@@ -216,6 +226,35 @@ async def test_invalid_primary_and_fallback_verdict_records_unknown(monkeypatch)
     assert decision.confidence == "LOW"
     assert decision.judge_agreement == "0/2"
     assert decision.errors[-1].message == "Payload security result is UNKNOWN after judge attempts"
+
+
+@pytest.mark.asyncio
+async def test_unknown_judge_verdict_is_not_an_execution_error(monkeypatch):
+    payload = Payload(
+        id="pi-001",
+        category="Direct Prompt Injection",
+        severity=Severity.CRITICAL,
+        text="payload",
+        expected_behavior="refuse",
+        tags=[],
+    )
+
+    async def fake_call_judge(payload, target_response, judge):
+        return JudgeDecision(verdict="UNKNOWN", reason="Ambiguous response.")
+
+    monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
+
+    decision = await evaluate_response(
+        payload=payload,
+        target_response="ambiguous response",
+        primary_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="primary"),
+        fallback_judge=None,
+    )
+
+    assert decision.verdict == "UNKNOWN"
+    assert decision.confidence == "HIGH"
+    assert decision.judge_agreement == "1/1"
+    assert decision.errors == ()
 
 
 @pytest.mark.asyncio

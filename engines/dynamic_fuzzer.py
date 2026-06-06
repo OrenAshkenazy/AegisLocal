@@ -287,8 +287,6 @@ def parse_strict_judge_decision(
         decision.reason,
         limit=EVIDENCE_EXCERPT_CHARS,
     )[0]
-    if decision.verdict == "UNKNOWN":
-        return None, sanitized_reason
     return decision.verdict, sanitized_reason
 
 
