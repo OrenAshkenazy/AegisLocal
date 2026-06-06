@@ -65,16 +65,6 @@ JUDGE_RESPONSE_SCHEMA = {
     },
 }
 
-JUDGE_RESPONSE_FORMAT = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "aegislocal_judge_decision",
-        "strict": True,
-        "schema": JUDGE_RESPONSE_SCHEMA,
-    },
-}
-
-
 class JudgeClassifierOutput(BaseModel):
     verdict: Literal["PASS", "FAIL", "UNKNOWN"]
     reason: str = Field(..., min_length=1, max_length=EVIDENCE_EXCERPT_CHARS)
@@ -216,7 +206,14 @@ def build_chat_payload(
         if endpoint and "/api/chat" in endpoint:
             payload["format"] = response_schema
         else:
-            payload["response_format"] = JUDGE_RESPONSE_FORMAT
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "aegislocal_judge_decision",
+                    "strict": True,
+                    "schema": response_schema,
+                },
+            }
     return payload
 
 
@@ -274,12 +271,8 @@ def extract_response_text(data: dict) -> str:
 def parse_strict_judge_decision(
     raw_text: str,
 ) -> Tuple[Optional[str], Optional[str]]:
-    stripped = raw_text.strip()
-    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
-    json_str = match.group(0) if match else stripped
-    try:
-        parsed = json.loads(json_str)
-    except json.JSONDecodeError:
+    parsed = _extract_judge_json_object(raw_text)
+    if parsed is None:
         return None, None
     try:
         decision = JudgeClassifierOutput.model_validate(parsed)
@@ -291,6 +284,22 @@ def parse_strict_judge_decision(
         limit=EVIDENCE_EXCERPT_CHARS,
     )[0]
     return decision.verdict, sanitized_reason
+
+
+def _extract_judge_json_object(raw_text: str) -> Optional[dict]:
+    stripped = raw_text.strip()
+    candidates = [stripped]
+    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+    if match:
+        candidates.append(match.group(0))
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
 
 
 def sanitize_evidence_text(text: str, limit: int = EVIDENCE_EXCERPT_CHARS) -> Tuple[str, bool]:
@@ -372,7 +381,7 @@ async def attack_target(
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             return await post_chat_completion(session, endpoint, model, messages), None
-    except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+    except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
         error = ExecutionError(
             source=ErrorSource.DYNAMIC,
             message="Target request failed",

@@ -62,6 +62,15 @@ def test_parse_strict_judge_decision_keeps_valid_unknown_verdict():
     assert reason == "The response is ambiguous."
 
 
+def test_parse_strict_judge_decision_extracts_json_from_wrapped_output():
+    verdict, reason = parse_strict_judge_decision(
+        'Judge result:\n```json\n{"verdict": "FAIL", "reason": "The model complied."}\n```'
+    )
+
+    assert verdict == "FAIL"
+    assert reason == "The model complied."
+
+
 def test_judge_chat_payload_uses_structured_deterministic_settings():
     payload = build_chat_payload(
         "judge",
@@ -78,6 +87,23 @@ def test_judge_chat_payload_uses_structured_deterministic_settings():
     assert payload["stream"] is False
     assert payload["response_format"]["type"] == "json_schema"
     assert payload["response_format"]["json_schema"]["strict"] is True
+
+
+def test_judge_chat_payload_uses_passed_response_schema():
+    response_schema = {
+        "type": "object",
+        "required": ["status"],
+        "properties": {"status": {"type": "string"}},
+    }
+
+    payload = build_chat_payload(
+        "judge",
+        [{"role": "user", "content": "classify"}],
+        response_schema=response_schema,
+        endpoint="http://localhost:11434/v1/chat/completions",
+    )
+
+    assert payload["response_format"]["json_schema"]["schema"] == response_schema
 
 
 def test_sanitize_evidence_text_truncates_and_redacts_common_sensitive_values():
@@ -258,6 +284,34 @@ async def test_unknown_judge_verdict_is_not_an_execution_error(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_malformed_judge_response_records_execution_error(monkeypatch):
+    payload = Payload(
+        id="pi-001",
+        category="Direct Prompt Injection",
+        severity=Severity.CRITICAL,
+        text="payload",
+        expected_behavior="refuse",
+        tags=[],
+    )
+
+    async def fake_call_judge(payload, target_response, judge):
+        raise ValueError("invalid json")
+
+    monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
+
+    decision = await evaluate_response(
+        payload=payload,
+        target_response="ambiguous response",
+        primary_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="primary"),
+        fallback_judge=None,
+    )
+
+    assert decision.verdict is None
+    assert decision.errors[0].message == "Primary judge request failed"
+    assert decision.errors[0].detail == "invalid json"
+
+
+@pytest.mark.asyncio
 async def test_calibrate_judge_rejects_valid_but_wrong_verdict(monkeypatch):
     async def fake_call_judge(payload, target_response, judge):
         if payload.id == "judge-calibration-refusal":
@@ -283,6 +337,21 @@ async def test_calibrate_judge_rejects_valid_but_wrong_verdict(monkeypatch):
         "judge-calibration-toxicity",
     }
     assert all(error.message == "Judge calibration failed" for error in errors)
+
+
+@pytest.mark.asyncio
+async def test_calibrate_judge_records_malformed_response(monkeypatch):
+    async def fake_call_judge(payload, target_response, judge):
+        raise ValueError("invalid json")
+
+    monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
+
+    errors = await calibrate_judge(
+        JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="weak")
+    )
+
+    assert len(errors) == 4
+    assert all(error.message == "Judge calibration request failed" for error in errors)
 
 
 def test_build_dynamic_evidence_only_includes_failed_and_unknown_payloads():

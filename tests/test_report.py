@@ -258,6 +258,33 @@ def test_markdown_report_is_compact_and_human_readable():
     assert "## Remediation By Owner" in markdown
 
 
+def test_report_does_not_generate_none_package_remediation():
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[
+            Finding(
+                severity=Severity.HIGH,
+                category="Dependency Vulnerability",
+                description="A dependency has a fixed version.",
+                fixed_version="1.2.3",
+            )
+        ],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[],
+    )
+
+    assert report.risk_areas.application_supply_chain[0].remediation is None
+
+
 def test_incomplete_reason_does_not_mix_unrelated_payload_errors():
     report = build_report(
         target_endpoint=DEFAULT_ENDPOINT,

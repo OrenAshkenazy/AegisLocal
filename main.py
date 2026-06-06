@@ -288,7 +288,7 @@ def _build_risk_areas(
 
 def _risk_from_finding(finding: Finding, *, owner: str) -> ReportRisk:
     remediation = finding.remediation
-    if finding.fixed_version:
+    if finding.fixed_version and finding.package_name:
         remediation = f"Upgrade {finding.package_name} to {finding.fixed_version} or later."
     return ReportRisk(
         severity=finding.severity,
