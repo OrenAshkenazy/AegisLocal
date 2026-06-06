@@ -91,6 +91,7 @@ class ScanConsole:
         lines = Text()
         lines.append("Result: ")
         lines.append(result.value, style=style)
+        lines.append(f"\nDecision: {report.production_decision.value}")
         lines.append(f"\nDuration: {report.scan_duration_seconds:.1f}s")
         if report.static_findings is not None:
             lines.append(f"\nStatic findings: {len(report.static_findings)}")

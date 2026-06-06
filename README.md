@@ -6,7 +6,8 @@
 AegisLocal is a local-first security scanner for AI applications and local LLM
 deployments. It audits both dependency risk and model behavior from a single CLI
 command, then emits a structured JSON report that works well for local
-development and CI.
+development and CI. It can also write a compact Markdown report for human
+review.
 
 The scanner is intentionally lightweight: it uses HTTP APIs for model access and
 does not import heavyweight ML frameworks such as `torch`, `transformers`, or
@@ -19,6 +20,8 @@ does not import heavyweight ML frameworks such as `torch`, `transformers`, or
 - **OSV vulnerability lookups** for pinned Python dependencies.
 - **Dynamic LLM fuzzing** with adversarial prompts from `data/payloads.json`.
 - **LLM-as-judge evaluation** with optional fallback judge model support.
+- **Judge calibration for dynamic scans** so weak local judge models fail closed
+  before payload evaluation.
 - **Red-team test coverage** for prompt injection, jailbreaks, system prompt
   extraction, sensitive data exposure, tool abuse, RAG manipulation, and policy
   evasion.
@@ -28,6 +31,8 @@ does not import heavyweight ML frameworks such as `torch`, `transformers`, or
   dynamic request at a time.
 - **Structured scan status** that separates security findings from execution
   reliability.
+- **Executive production decisions** with `PASS`, `WARN`, `BLOCK_STAGING`,
+  `BLOCK_PRODUCTION`, and `SCAN_INVALID` gates.
 - **CI-friendly exit codes** and machine-readable JSON output.
 
 ## Requirements
@@ -157,6 +162,9 @@ ollama pull llama3.2:1b
 --fallback-judge-model TEXT      Optional fallback judge model.
 --include-evidence               Include sanitized evidence for failed or
                                   unknown dynamic payloads.
+--judge-calibration / --no-judge-calibration
+                                  Run deterministic judge calibration before
+                                  dynamic payload evaluation.
 --license-scan / --no-license-scan
                                   Run License Policy Review using local
                                   SBOM/AIBOM/cache metadata.
@@ -169,6 +177,8 @@ ollama pull llama3.2:1b
 --generate-bom / --no-generate-bom
                                   Generate missing default SBOM/AIBOM files for
                                   License Policy Review.
+--output-file PATH                Write JSON report to file.
+--markdown-output-file PATH       Write compact Markdown report to file.
 ```
 
 ## Report Semantics
@@ -176,14 +186,22 @@ ollama pull llama3.2:1b
 AegisLocal separates confirmed security outcomes from scan reliability:
 
 - `security_result`: `PASS`, `FAIL`, or `UNKNOWN`
+- `production_decision`: `PASS`, `WARN`, `BLOCK_STAGING`, `BLOCK_PRODUCTION`,
+  or `SCAN_INVALID`
+- `executive_summary`: top-level decision, reason, top risks, and next actions
 - `execution_status`: `COMPLETE` or `SCAN_INCOMPLETE`
+- `risk_areas`: separate application supply-chain, model behavioral, model
+  license, and scan reliability risks
+- `owner_remediation`: actions grouped by owning team
 - `passed_audit`: `true` only when the scan completed without failing findings
 
 Execution errors are printed to stderr while the scan runs and are also included
 in the JSON report under `execution_errors`.
 
 Dynamic findings are grouped by category and include counts plus payload IDs.
-Raw model responses are not included by default.
+Each failed or unknown dynamic payload also gets a compact confidence assessment
+with `payload_id`, `verdict`, `confidence`, `judge_agreement`, and
+`evidence_available`. Raw model responses are not included by default.
 
 Static findings include an `action` field. Dependency vulnerabilities use
 `FAIL`; License Policy Review findings use `WARN`, so warning-only license
@@ -205,6 +223,14 @@ response excerpt. AegisLocal removes control characters, collapses whitespace,
 truncates long text, and redacts common secret-like values and email addresses.
 Evidence is still potentially sensitive, so keep it off for routine CI unless
 you need debugging context.
+
+For a human-readable summary, write Markdown alongside JSON:
+
+```bash
+uv run python main.py scan all \
+  --output-file report.json \
+  --markdown-output-file report.md
+```
 
 Example incomplete report fields:
 
@@ -269,8 +295,14 @@ Current categories:
 
 Each payload includes an `expected_behavior` field. During a dynamic scan,
 AegisLocal sends the payload to the target model, sends the payload and target
-response to the judge model, normalizes the judge verdict, and groups failures
-by category in the final report.
+response to the judge model, normalizes the judge verdict, records judge
+agreement when a fallback judge is configured, and groups failures by category in
+the final report.
+
+Before payload evaluation, AegisLocal runs a small judge calibration preflight.
+The judge must correctly classify known refusal and unsafe-compliance examples.
+If calibration fails, the dynamic scan stops as `UNKNOWN` instead of trusting a
+weak judge that may return false `PASS` verdicts.
 
 The scanner intentionally reports only failed counts and payload IDs by default.
 Use `--include-evidence` when you need sanitized prompt/response excerpts and a

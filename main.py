@@ -10,7 +10,22 @@ from typing import Optional, Sequence
 import typer
 
 from core.console import ScanConsole
-from core.models import ExecutionStatus, FindingAction, ScanReport, SecurityResult
+from core.models import (
+    ErrorSource,
+    ExecutionError,
+    ExecutionStatus,
+    ExecutiveSummary,
+    Finding,
+    FindingAction,
+    GroupedFinding,
+    OwnerRemediation,
+    ProductionDecision,
+    ReportRisk,
+    RiskAreas,
+    ScanReport,
+    SecurityResult,
+    Severity,
+)
 from engines.bom import write_aibom, write_sbom
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
@@ -33,6 +48,13 @@ DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_SBOM_FILE = "bom.sbom.cdx.json"
 DEFAULT_AIBOM_FILE = "bom.aibom.cdx.json"
 SCAN_MODES = {"static", "dynamic", "licenses", "all"}
+SEVERITY_RANK = {
+    Severity.INFO: 0,
+    Severity.LOW: 1,
+    Severity.MEDIUM: 2,
+    Severity.HIGH: 3,
+    Severity.CRITICAL: 4,
+}
 
 app = typer.Typer(help="AegisLocal local AI security scanner.")
 
@@ -63,6 +85,7 @@ def build_report(
     dynamic_findings,
     dynamic_evidence,
     execution_errors,
+    dynamic_assessments=None,
     license_findings=None,
     license_coverage=None,
     scan_type: str = "all",
@@ -73,6 +96,7 @@ def build_report(
 ) -> ScanReport:
     static_findings = list(static_findings or [])
     dynamic_findings = list(dynamic_findings or [])
+    dynamic_assessments = list(dynamic_assessments or [])
     dynamic_evidence = list(dynamic_evidence or [])
     license_findings = list(license_findings or [])
     has_failing_static_findings = any(
@@ -95,6 +119,29 @@ def build_report(
         security_result == SecurityResult.PASS
         and execution_status == ExecutionStatus.COMPLETE
     )
+    production_decision = _production_decision(
+        static_findings=static_findings,
+        dynamic_findings=dynamic_findings,
+        license_findings=license_findings,
+        execution_errors=execution_errors,
+    )
+    risk_areas = _build_risk_areas(
+        static_findings=static_findings,
+        dynamic_findings=dynamic_findings,
+        license_findings=license_findings,
+        execution_errors=execution_errors,
+    )
+    incomplete_reason = _build_incomplete_reason(
+        execution_errors=execution_errors,
+        has_confirmed_findings=has_failing_findings,
+    )
+    owner_remediation = _build_owner_remediation(risk_areas)
+    executive_summary = _build_executive_summary(
+        decision=production_decision,
+        risk_areas=risk_areas,
+        owner_remediation=owner_remediation,
+        incomplete_reason=incomplete_reason,
+    )
 
     return ScanReport(
         scan_type=scan_type,
@@ -112,22 +159,397 @@ def build_report(
         fallback_judge_model=fallback_judge_model if include_dynamic_section else None,
         include_evidence=include_evidence if include_dynamic_section else None,
         security_result=security_result,
+        production_decision=production_decision,
+        executive_summary=executive_summary,
         execution_status=execution_status,
         status_message=(
             "**SCAN INCOMPLETE**"
             if execution_status == ExecutionStatus.SCAN_INCOMPLETE
             else "COMPLETE"
         ),
+        incomplete_reason=incomplete_reason,
         static_findings=static_findings if include_static_section else None,
         dynamic_findings=dynamic_findings if include_dynamic_section else None,
+        dynamic_assessments=(
+            dynamic_assessments if include_dynamic_section else None
+        ),
         dynamic_evidence=dynamic_evidence if include_dynamic_section else None,
         license_findings=license_findings if include_license_section else None,
         license_coverage=license_coverage if include_license_section else None,
+        risk_areas=risk_areas,
+        owner_remediation=owner_remediation,
         execution_errors=execution_errors,
         passed_audit=passed_audit,
         scan_duration_seconds=scan_duration_seconds,
         scanner_version=_get_version(),
     )
+
+
+def _production_decision(
+    *,
+    static_findings: Sequence[Finding],
+    dynamic_findings: Sequence[GroupedFinding],
+    license_findings: Sequence[Finding],
+    execution_errors: Sequence[ExecutionError],
+) -> ProductionDecision:
+    failing_findings = [
+        finding
+        for finding in [*static_findings, *license_findings]
+        if getattr(finding, "action", FindingAction.FAIL) == FindingAction.FAIL
+    ]
+    all_confirmed = [*failing_findings, *dynamic_findings]
+
+    if execution_errors and not all_confirmed:
+        return ProductionDecision.SCAN_INVALID
+    if any(_severity_at_least(item.severity, Severity.HIGH) for item in all_confirmed):
+        return ProductionDecision.BLOCK_PRODUCTION
+    if any(_severity_at_least(item.severity, Severity.MEDIUM) for item in all_confirmed):
+        return ProductionDecision.BLOCK_STAGING
+    if all_confirmed or _has_warning_findings([*static_findings, *license_findings]):
+        return ProductionDecision.WARN
+    return ProductionDecision.PASS
+
+
+def _has_warning_findings(findings: Sequence[Finding]) -> bool:
+    return any(
+        getattr(finding, "action", FindingAction.FAIL) != FindingAction.FAIL
+        for finding in findings
+    )
+
+
+def _severity_at_least(severity: Severity, minimum: Severity) -> bool:
+    return SEVERITY_RANK[severity] >= SEVERITY_RANK[minimum]
+
+
+def _build_risk_areas(
+    *,
+    static_findings: Sequence[Finding],
+    dynamic_findings: Sequence[GroupedFinding],
+    license_findings: Sequence[Finding],
+    execution_errors: Sequence[ExecutionError],
+) -> RiskAreas:
+    application_supply_chain: list[ReportRisk] = [
+        _risk_from_finding(finding, owner="Platform team")
+        for finding in static_findings
+    ]
+    model_license: list[ReportRisk] = []
+
+    for finding in license_findings:
+        if finding.subject_type == "model" or "Model License" in finding.category:
+            model_license.append(_risk_from_finding(finding, owner="Security team"))
+        else:
+            application_supply_chain.append(
+                _risk_from_finding(finding, owner="Platform team")
+            )
+
+    model_behavior = [
+        ReportRisk(
+            severity=finding.severity,
+            category=finding.category,
+            description=(
+                f"{finding.failed_count} dynamic payload(s) failed: "
+                f"{', '.join(finding.payload_ids)}"
+            ),
+            owner="AI platform team",
+            remediation="Review failed payloads and tune prompts, policies, or guardrails.",
+            payload_ids=finding.payload_ids,
+        )
+        for finding in dynamic_findings
+    ]
+
+    scan_reliability = [
+        ReportRisk(
+            severity=_execution_error_severity(error),
+            category="Scan Reliability",
+            description=_execution_error_description(error),
+            owner="AI platform team",
+            remediation=_execution_error_remediation(error),
+            payload_ids=[error.payload_id] if error.payload_id else [],
+        )
+        for error in execution_errors
+    ]
+
+    return RiskAreas(
+        application_supply_chain=sorted(
+            application_supply_chain,
+            key=lambda item: (-SEVERITY_RANK[item.severity], item.category),
+        ),
+        model_behavior=sorted(
+            model_behavior,
+            key=lambda item: (-SEVERITY_RANK[item.severity], item.category),
+        ),
+        model_license=sorted(
+            model_license,
+            key=lambda item: (-SEVERITY_RANK[item.severity], item.category),
+        ),
+        scan_reliability=scan_reliability,
+    )
+
+
+def _risk_from_finding(finding: Finding, *, owner: str) -> ReportRisk:
+    remediation = finding.remediation
+    if finding.fixed_version:
+        remediation = f"Upgrade {finding.package_name} to {finding.fixed_version} or later."
+    return ReportRisk(
+        severity=finding.severity,
+        category=finding.category,
+        description=finding.description,
+        owner=owner,
+        remediation=remediation,
+        subject_name=finding.subject_name,
+        package_name=finding.package_name,
+    )
+
+
+def _execution_error_severity(error: ExecutionError) -> Severity:
+    if error.source in {ErrorSource.CONFIG, ErrorSource.DYNAMIC}:
+        return Severity.HIGH
+    return Severity.MEDIUM
+
+
+def _execution_error_description(error: ExecutionError) -> str:
+    subject = f" for {error.payload_id}" if error.payload_id else ""
+    detail = f": {error.detail}" if error.detail else ""
+    return f"{error.message}{subject}{detail}"
+
+
+def _execution_error_remediation(error: ExecutionError) -> str:
+    if "fallback judge" in error.message.lower() or "judge" in error.message.lower():
+        return "Configure a fallback judge and re-run the dynamic scan."
+    if error.source == ErrorSource.CONFIG:
+        return "Fix scan configuration and re-run before trusting omitted results."
+    return "Re-run the scan and review the failing scanner dependency or service."
+
+
+def _build_incomplete_reason(
+    *,
+    execution_errors: Sequence[ExecutionError],
+    has_confirmed_findings: bool,
+) -> Optional[str]:
+    if not execution_errors:
+        return None
+
+    invalid_payload_ids = sorted(
+        {
+            error.payload_id
+            for error in execution_errors
+            if error.payload_id and "invalid verdict" in error.message.lower()
+        }
+    )
+    no_fallback_payload_ids = {
+        error.payload_id
+        for error in execution_errors
+        if error.payload_id and "no fallback judge" in error.message.lower()
+    }
+    if invalid_payload_ids and no_fallback_payload_ids:
+        prefix = (
+            "The scan found confirmed failures, but "
+            if has_confirmed_findings
+            else "The scan could not complete because "
+        )
+        payload_text = ", ".join(invalid_payload_ids)
+        return (
+            f"{prefix}payload {payload_text} could not be evaluated reliably because "
+            "the primary judge returned an invalid verdict and no fallback judge was configured."
+        )
+
+    calibration_payloads = sorted(
+        {
+            error.payload_id
+            for error in execution_errors
+            if error.payload_id and "calibration" in error.message.lower()
+        }
+    )
+    if calibration_payloads:
+        return (
+            "The dynamic scan stopped before payload evaluation because judge "
+            "calibration failed; configure a stronger judge or disable calibration only "
+            "for diagnostic runs."
+        )
+
+    prefix = (
+        "The scan found confirmed failures, but "
+        if has_confirmed_findings
+        else "The scan result is incomplete because "
+    )
+    return (
+        f"{prefix}{len(execution_errors)} execution error(s) occurred. "
+        "Review execution_errors before treating missing findings as clean."
+    )
+
+
+def _build_owner_remediation(risk_areas: RiskAreas) -> list[OwnerRemediation]:
+    owner_actions: dict[str, list[str]] = {}
+
+    def add(owner: str, action: str) -> None:
+        owner_actions.setdefault(owner, [])
+        if action not in owner_actions[owner]:
+            owner_actions[owner].append(action)
+
+    if risk_areas.application_supply_chain:
+        add("Platform team", "Fix dependency vulnerabilities and supply-chain warnings.")
+    if risk_areas.model_behavior:
+        payloads = sorted(
+            {
+                payload_id
+                for risk in risk_areas.model_behavior
+                for payload_id in risk.payload_ids
+            }
+        )
+        add("AI platform team", f"Review failed dynamic payloads: {', '.join(payloads)}.")
+        categories = sorted({risk.category for risk in risk_areas.model_behavior})
+        add("ML team", f"Tune system prompt or guardrails for: {', '.join(categories)}.")
+    if risk_areas.model_license:
+        add("Security team", "Approve model license policy before production use.")
+    if risk_areas.scan_reliability:
+        add("AI platform team", "Re-run incomplete scans with fallback judge and evidence capture.")
+
+    return [
+        OwnerRemediation(owner=owner, actions=actions)
+        for owner, actions in sorted(owner_actions.items())
+    ]
+
+
+def _build_executive_summary(
+    *,
+    decision: ProductionDecision,
+    risk_areas: RiskAreas,
+    owner_remediation: Sequence[OwnerRemediation],
+    incomplete_reason: Optional[str],
+) -> ExecutiveSummary:
+    top_risks = _top_risk_descriptions(risk_areas)
+    next_actions = [
+        action
+        for remediation in owner_remediation
+        for action in remediation.actions
+    ][:5]
+    if incomplete_reason and "fallback judge" in incomplete_reason.lower():
+        next_actions.append("Re-run with fallback judge.")
+    reason = _decision_reason(decision, risk_areas, incomplete_reason)
+    return ExecutiveSummary(
+        decision=decision,
+        reason=reason,
+        top_risks=top_risks[:5],
+        next_actions=next_actions[:5],
+    )
+
+
+def _top_risk_descriptions(risk_areas: RiskAreas) -> list[str]:
+    risks = [
+        *risk_areas.application_supply_chain,
+        *risk_areas.model_behavior,
+        *risk_areas.model_license,
+        *risk_areas.scan_reliability,
+    ]
+    return [
+        risk.description
+        for risk in sorted(risks, key=lambda item: -SEVERITY_RANK[item.severity])
+    ]
+
+
+def _decision_reason(
+    decision: ProductionDecision,
+    risk_areas: RiskAreas,
+    incomplete_reason: Optional[str],
+) -> str:
+    has_critical_app = any(
+        risk.severity == Severity.CRITICAL
+        for risk in risk_areas.application_supply_chain
+    )
+    has_high_behavior = any(
+        _severity_at_least(risk.severity, Severity.HIGH)
+        for risk in risk_areas.model_behavior
+    )
+    if decision == ProductionDecision.BLOCK_PRODUCTION and has_critical_app and has_high_behavior:
+        return "Confirmed high-risk dynamic failures and critical dependency vulnerabilities"
+    if decision == ProductionDecision.BLOCK_PRODUCTION:
+        return "Confirmed high or critical severity findings block production use"
+    if decision == ProductionDecision.BLOCK_STAGING:
+        return "Confirmed medium severity findings require remediation before staging"
+    if decision == ProductionDecision.SCAN_INVALID:
+        return incomplete_reason or "The scan did not complete reliably"
+    if decision == ProductionDecision.WARN:
+        return "No blocking findings, but warnings require owner review"
+    return "No blocking findings and the scan completed"
+
+
+def render_markdown_report(report: ScanReport) -> str:
+    scan_status = (
+        "Incomplete"
+        if report.execution_status == ExecutionStatus.SCAN_INCOMPLETE
+        else "Complete"
+    )
+    lines = [
+        "# AegisLocal Report",
+        "",
+        f"Decision: {report.production_decision.value}",
+    ]
+    if report.target_model:
+        lines.append(f"Model: {report.target_model}")
+    lines.extend(
+        [
+            f"Scan status: {scan_status}",
+            f"Main reason: {report.executive_summary.reason}",
+            "",
+            "## Top Issues",
+        ]
+    )
+
+    if report.executive_summary.top_risks:
+        for index, risk in enumerate(report.executive_summary.top_risks, start=1):
+            lines.append(f"{index}. {risk}")
+    else:
+        lines.append("None.")
+
+    if report.incomplete_reason:
+        lines.extend(["", "## Why Incomplete", report.incomplete_reason])
+
+    if report.dynamic_assessments:
+        lines.extend(
+            [
+                "",
+                "## Dynamic Confidence",
+                "| Payload | Verdict | Confidence | Judge agreement | Evidence |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for assessment in report.dynamic_assessments:
+            evidence = "yes" if assessment.evidence_available else "no"
+            lines.append(
+                "| "
+                f"{assessment.payload_id} | {assessment.verdict} | "
+                f"{assessment.confidence} | {assessment.judge_agreement} | {evidence} |"
+            )
+
+    lines.extend(["", "## Risk Areas"])
+    lines.extend(_markdown_risk_area("Application supply chain risk", report.risk_areas.application_supply_chain))
+    lines.extend(_markdown_risk_area("Model behavioral risk", report.risk_areas.model_behavior))
+    lines.extend(_markdown_risk_area("Model license risk", report.risk_areas.model_license))
+    lines.extend(_markdown_risk_area("Scan reliability risk", report.risk_areas.scan_reliability))
+
+    lines.extend(["", "## Remediation By Owner"])
+    if report.owner_remediation:
+        for owner in report.owner_remediation:
+            actions = "; ".join(owner.actions)
+            lines.append(f"- {owner.owner}: {actions}")
+    else:
+        lines.append("- None.")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _markdown_risk_area(title: str, risks: Sequence[ReportRisk]) -> list[str]:
+    lines = [f"### {title}"]
+    if not risks:
+        lines.append("- None.")
+        return lines
+    for risk in risks:
+        remediation = f" Remediation: {risk.remediation}" if risk.remediation else ""
+        lines.append(
+            f"- {risk.severity.value} - {risk.description} "
+            f"Owner: {risk.owner}.{remediation}"
+        )
+    return lines
 
 
 async def run_scan(
@@ -142,6 +564,7 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    calibrate_judge_model: bool,
     run_static: bool,
     run_dynamic: bool,
     license_scan: bool,
@@ -212,10 +635,16 @@ async def run_scan(
     dynamic_findings = []
     dynamic_errors = []
     dynamic_evidence = []
+    dynamic_assessments = []
     if run_dynamic:
         payloads, payload_errors = load_payloads(payload_file)
         with console.dynamic_progress(len(payloads)) as dynamic_cb:
-            dynamic_findings, dynamic_errors, dynamic_evidence = await run_dynamic_scan(
+            (
+                dynamic_findings,
+                dynamic_errors,
+                dynamic_evidence,
+                dynamic_assessments,
+            ) = await run_dynamic_scan(
                 payload_file=payload_file,
                 target_endpoint=target_endpoint,
                 target_model=target_model,
@@ -226,6 +655,7 @@ async def run_scan(
                 target_timeout_seconds=target_timeout_seconds,
                 dynamic_concurrency=dynamic_concurrency,
                 include_evidence=include_evidence,
+                calibrate_judge_model=calibrate_judge_model,
                 on_progress=dynamic_cb,
                 payloads=payloads,
                 initial_errors=payload_errors,
@@ -247,6 +677,7 @@ async def run_scan(
         static_findings=static_findings,
         dynamic_findings=dynamic_findings,
         dynamic_evidence=dynamic_evidence,
+        dynamic_assessments=dynamic_assessments,
         license_findings=license_findings,
         license_coverage=license_coverage,
         execution_errors=[*static_errors, *license_errors, *dynamic_errors],
@@ -428,6 +859,11 @@ def scan(
         "--include-evidence",
         help="Include sanitized target response excerpts for failed or unknown dynamic payloads.",
     ),
+    calibrate_judge_model: bool = typer.Option(
+        True,
+        "--judge-calibration/--no-judge-calibration",
+        help="Run deterministic judge calibration before dynamic payload evaluation.",
+    ),
     license_scan: bool = typer.Option(
         False,
         "--license-scan/--no-license-scan",
@@ -476,6 +912,11 @@ def scan(
         "-o",
         help="Write JSON report to file (in addition to stdout).",
     ),
+    markdown_output_file: Optional[Path] = typer.Option(
+        None,
+        "--markdown-output-file",
+        help="Write a compact Markdown report for human review.",
+    ),
 ) -> None:
     if quiet and verbose:
         typer.echo("Error: --quiet and --verbose are mutually exclusive.", err=True)
@@ -500,6 +941,7 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            calibrate_judge_model=calibrate_judge_model,
             run_static=run_static,
             run_dynamic=run_dynamic,
             license_scan=effective_license_scan,
@@ -519,6 +961,8 @@ def scan(
 
     if output_file is not None:
         output_file.write_text(report_json, encoding="utf-8")
+    if markdown_output_file is not None:
+        markdown_output_file.write_text(render_markdown_report(report), encoding="utf-8")
 
     raise typer.Exit(code=0 if report.passed_audit else 1)
 

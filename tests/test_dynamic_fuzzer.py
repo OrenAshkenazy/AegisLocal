@@ -10,18 +10,21 @@ from core.models import Payload, Severity
 import engines.dynamic_fuzzer as dynamic_fuzzer
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
+    JUDGE_RESPONSE_SCHEMA,
     JudgeDecision,
     JudgeConfig,
     TARGET_TIMEOUT_SECONDS,
     PayloadEvaluation,
+    build_chat_payload,
+    build_dynamic_assessments,
     build_dynamic_evidence,
+    calibrate_judge,
     evaluate_response,
     extract_response_text,
     group_dynamic_findings,
     load_payloads,
-    parse_judge_decision,
+    parse_strict_judge_decision,
     sanitize_evidence_text,
-    sanitize_judge_verdict,
 )
 
 
@@ -34,50 +37,38 @@ def test_extract_response_text_supports_openai_and_ollama_shapes():
     assert extract_response_text({"response": "ollama generate"}) == "ollama generate"
 
 
-def test_sanitize_judge_verdict_uses_word_boundaries():
-    assert sanitize_judge_verdict(" PASS\n") == "PASS"
-    assert sanitize_judge_verdict("The result is: fail.") == "FAIL"
-    assert sanitize_judge_verdict("pass and fail") is None
-    assert sanitize_judge_verdict("compassionate") is None
-
-
-def test_parse_judge_decision_prefers_json_reason():
-    verdict, reason = parse_judge_decision(
-        '{"verdict": "FAIL", "reason": "The model followed the injected instruction."}'
+def test_parse_strict_judge_decision_requires_exact_schema_json():
+    verdict, reason = parse_strict_judge_decision(
+        '{"verdict": "FAIL", "reason": "The model complied."}'
     )
 
     assert verdict == "FAIL"
-    assert reason == "The model followed the injected instruction."
+    assert reason == "The model complied."
 
-
-def test_parse_judge_decision_accepts_boolean_json_verdicts():
-    pass_verdict, pass_reason = parse_judge_decision(
-        '{"verdict": true, "reason": "The model refused."}'
-    )
-    fail_verdict, fail_reason = parse_judge_decision(
-        '{"verdict": false, "reason": "The model complied."}'
+    invalid_verdict, invalid_reason = parse_strict_judge_decision(
+        "The result is FAIL."
     )
 
-    assert pass_verdict == "PASS"
-    assert pass_reason == "The model refused."
-    assert fail_verdict == "FAIL"
-    assert fail_reason == "The model complied."
+    assert invalid_verdict is None
+    assert invalid_reason is None
 
 
-def test_parse_judge_decision_falls_back_to_word_boundary_verdict():
-    verdict, reason = parse_judge_decision("The result is PASS.")
-
-    assert verdict == "PASS"
-    assert reason is None
-
-
-def test_parse_judge_decision_does_not_regex_fallback_after_json_parse():
-    verdict, reason = parse_judge_decision(
-        '{"verdict": "UNSURE", "reason": "The response mentions PASS but the verdict is invalid."}'
+def test_judge_chat_payload_uses_structured_deterministic_settings():
+    payload = build_chat_payload(
+        "judge",
+        [{"role": "user", "content": "classify"}],
+        deterministic=True,
+        response_schema=JUDGE_RESPONSE_SCHEMA,
+        endpoint="http://localhost:11434/v1/chat/completions",
     )
 
-    assert verdict is None
-    assert reason == "The response mentions PASS but the verdict is invalid."
+    assert payload["temperature"] == 0.0
+    assert payload["top_p"] == 0.1
+    assert payload["seed"] == 42
+    assert payload["max_tokens"] == 160
+    assert payload["stream"] is False
+    assert payload["response_format"]["type"] == "json_schema"
+    assert payload["response_format"]["json_schema"]["strict"] is True
 
 
 def test_sanitize_evidence_text_truncates_and_redacts_common_sensitive_values():
@@ -193,6 +184,8 @@ async def test_fallback_judge_recovery_does_not_mark_execution_error(monkeypatch
     assert decision.verdict == "PASS"
     assert decision.judge_model == "fallback"
     assert decision.reason == "The model refused."
+    assert decision.confidence == "MEDIUM"
+    assert decision.judge_agreement == "1/2"
     assert decision.errors == ()
 
 
@@ -220,7 +213,37 @@ async def test_invalid_primary_and_fallback_verdict_records_unknown(monkeypatch)
     )
 
     assert decision.verdict is None
+    assert decision.confidence == "LOW"
+    assert decision.judge_agreement == "0/2"
     assert decision.errors[-1].message == "Payload security result is UNKNOWN after judge attempts"
+
+
+@pytest.mark.asyncio
+async def test_calibrate_judge_rejects_valid_but_wrong_verdict(monkeypatch):
+    async def fake_call_judge(payload, target_response, judge):
+        if payload.id == "judge-calibration-refusal":
+            return JudgeDecision(
+                verdict="PASS",
+                reason="The model refused.",
+            )
+        return JudgeDecision(
+            verdict="PASS",
+            reason="The model appears acceptable.",
+        )
+
+    monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
+
+    errors = await calibrate_judge(
+        JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="weak")
+    )
+
+    assert len(errors) == 3
+    assert {error.payload_id for error in errors} == {
+        "judge-calibration-code",
+        "judge-calibration-pii",
+        "judge-calibration-toxicity",
+    }
+    assert all(error.message == "Judge calibration failed" for error in errors)
 
 
 def test_build_dynamic_evidence_only_includes_failed_and_unknown_payloads():
@@ -271,3 +294,34 @@ def test_build_dynamic_evidence_only_includes_failed_and_unknown_payloads():
     assert evidence[0].target_response_excerpt == "unsafe response"
     assert evidence[1].judge_verdict == "UNKNOWN"
     assert build_dynamic_evidence(evidence, include_evidence=False) == []
+
+
+def test_build_dynamic_assessments_tracks_confidence_without_evidence():
+    payload = Payload(
+        id="rag-004",
+        category="RAG Context Manipulation",
+        severity=Severity.HIGH,
+        text="payload",
+        expected_behavior="refuse",
+        tags=[],
+    )
+
+    assessments = build_dynamic_assessments(
+        [
+            PayloadEvaluation(
+                payload=payload,
+                failed=True,
+                verdict="FAIL",
+                confidence="HIGH",
+                judge_agreement="2/2",
+                target_response="unsafe response",
+            )
+        ],
+        include_evidence=False,
+    )
+
+    assert assessments[0].payload_id == "rag-004"
+    assert assessments[0].verdict == "FAIL"
+    assert assessments[0].confidence == "HIGH"
+    assert assessments[0].judge_agreement == "2/2"
+    assert assessments[0].evidence_available is False
