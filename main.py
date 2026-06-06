@@ -199,12 +199,12 @@ def _production_decision(
     ]
     all_confirmed = [*failing_findings, *dynamic_findings]
 
-    if execution_errors and not all_confirmed:
-        return ProductionDecision.SCAN_INVALID
     if any(_severity_at_least(item.severity, Severity.HIGH) for item in all_confirmed):
         return ProductionDecision.BLOCK_PRODUCTION
     if any(_severity_at_least(item.severity, Severity.MEDIUM) for item in all_confirmed):
         return ProductionDecision.BLOCK_STAGING
+    if execution_errors:
+        return ProductionDecision.SCAN_INVALID
     if all_confirmed or _has_warning_findings([*static_findings, *license_findings]):
         return ProductionDecision.WARN
     return ProductionDecision.PASS
