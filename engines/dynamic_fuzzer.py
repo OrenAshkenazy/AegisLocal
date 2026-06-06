@@ -274,8 +274,11 @@ def extract_response_text(data: dict) -> str:
 def parse_strict_judge_decision(
     raw_text: str,
 ) -> Tuple[Optional[str], Optional[str]]:
+    stripped = raw_text.strip()
+    match = re.search(r"\{.*\}", stripped, flags=re.DOTALL)
+    json_str = match.group(0) if match else stripped
     try:
-        parsed = json.loads(raw_text.strip())
+        parsed = json.loads(json_str)
     except json.JSONDecodeError:
         return None, None
     try:
