@@ -483,7 +483,7 @@ async def _attempt_judge(
             message=f"{judge_name.capitalize()} judge returned an invalid verdict",
             payload_id=payload.id,
         )
-    except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+    except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
         error = ExecutionError(
             source=ErrorSource.DYNAMIC,
             message=f"{judge_name.capitalize()} judge request failed",
