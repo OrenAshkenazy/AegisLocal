@@ -445,6 +445,7 @@ async def evaluate_response(
             reason=decision.reason if decision else None,
             confidence="HIGH" if total_attempts == 1 else "MEDIUM",
             judge_agreement=judge_agreement,
+            errors=tuple(errors),
         )
 
     if fallback_judge is None:
