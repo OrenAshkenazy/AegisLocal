@@ -540,7 +540,7 @@ async def calibrate_judge(judge: JudgeConfig) -> List[ExecutionError]:
     ) -> Optional[ExecutionError]:
         try:
             decision = await _call_judge(payload, target_response, judge)
-        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             error = ExecutionError(
                 source=ErrorSource.DYNAMIC,
                 message="Judge calibration request failed",
