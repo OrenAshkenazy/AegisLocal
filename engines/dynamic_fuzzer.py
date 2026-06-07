@@ -656,7 +656,7 @@ async def _evaluate_payload(
 
 
 def group_dynamic_findings(evaluations: Sequence[PayloadEvaluation]) -> List[GroupedFinding]:
-    grouped: Dict[str, Dict[str, object]] = defaultdict(
+    grouped: Dict[str, dict] = defaultdict(
         lambda: {"ids": [], "severity": Severity.INFO, "owasp_tags": set()}
     )
     severity_rank = {
