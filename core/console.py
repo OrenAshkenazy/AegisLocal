@@ -122,10 +122,7 @@ class ScanConsole:
         passed_payload_lines = _passed_payload_lines(report) if self._verbose else []
         if passed_payload_lines:
             lines.append("\n\nPassed payloads\n", style="bold")
-            for index, payload_line in enumerate(passed_payload_lines):
-                lines.append(payload_line)
-                if index != len(passed_payload_lines) - 1:
-                    lines.append("\n")
+            lines.append("\n".join(passed_payload_lines))
         lines.append("\n\nNext step\n", style="bold")
         lines.append(_next_step(report))
 

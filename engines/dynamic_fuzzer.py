@@ -405,19 +405,17 @@ async def evaluate_response(
     if fallback_judge is not None:
         judges.append(("fallback", fallback_judge))
 
-    attempts = list(
-        await asyncio.gather(*(
-            _attempt_judge(
-                name,
-                j,
-                payload,
-                target_response,
-                session,
-                judge_timeout_seconds,
-            )
-            for name, j in judges
-        ))
-    )
+    attempts = await asyncio.gather(*(
+        _attempt_judge(
+            name,
+            j,
+            payload,
+            target_response,
+            session,
+            judge_timeout_seconds,
+        )
+        for name, j in judges
+    ))
 
     errors = [attempt.error for attempt in attempts if attempt.error is not None]
     valid_attempts = [
