@@ -111,12 +111,11 @@ class ScanConsole:
                     lines.append("\n")
 
         lines.append("\nFinding counts\n", style="bold")
-        lines.append(
-            f"Application supply chain: {_count_summary(report.findings.application_supply_chain)}\n"
-        )
-        lines.append(f"Model behavior: {_count_summary(report.findings.model_behavior)}\n")
-        lines.append(f"Model license: {_count_summary(report.findings.model_license)}\n")
-        lines.append(f"Scan reliability: {_count_summary(report.findings.scan_reliability)}")
+        count_lines = _finding_count_lines(report)
+        for index, count_line in enumerate(count_lines):
+            lines.append(count_line)
+            if index != len(count_lines) - 1:
+                lines.append("\n")
         if report.execution_errors:
             lines.append(f"\nExecution errors: {len(report.execution_errors)}")
         lines.append("\n\nNext step\n", style="bold")
@@ -198,6 +197,8 @@ def _risk_details(risk: ReportRisk) -> list[str]:
     if risk.vulnerability_ids:
         label = "CVE" if len(risk.vulnerability_ids) == 1 else "CVEs"
         details.append(f"{label}: {', '.join(risk.vulnerability_ids)}")
+    if risk.source_file:
+        details.append(f"Source: {risk.source_file}")
     details.append(f"Owner: {risk.owner}")
     return details
 
@@ -207,6 +208,21 @@ def _count_summary(risks: list[ReportRisk]) -> str:
         return "0"
     severities = Counter(risk.severity.value.lower() for risk in risks)
     return _severity_count_text(severities)
+
+
+def _finding_count_lines(report: ScanReport) -> list[str]:
+    sections = [
+        ("Application supply chain", report.findings.application_supply_chain),
+        ("Model behavior", report.findings.model_behavior),
+        ("Model license", report.findings.model_license),
+        ("Scan reliability", report.findings.scan_reliability),
+    ]
+    lines = [
+        f"{label}: {_count_summary(risks)}"
+        for label, risks in sections
+        if risks
+    ]
+    return lines or ["None"]
 
 
 def _next_step(report: ScanReport) -> str:

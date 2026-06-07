@@ -10,6 +10,7 @@ from core.models import (
     GroupedFinding,
     Severity,
 )
+from core.console import ScanConsole
 from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
 from main import (
     DEFAULT_ENDPOINT,
@@ -222,6 +223,45 @@ def test_compact_json_report_contains_actions_not_internal_junk():
     assert '"current_version": "3.13"' in rendered
     assert '"fixed_version": "3.15"' in rendered
     assert '"action": "Upgrade idna to 3.15 or later"' in rendered
+
+
+def test_human_report_shows_source_and_hides_zero_counts(capsys):
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[
+            Finding(
+                severity=Severity.MEDIUM,
+                category="Dependency Vulnerability",
+                description="idna==3.13 is affected by CVE-2026-45409.",
+                package_name="idna",
+                package_version="3.13",
+                fixed_version="3.15",
+                vulnerability_id="CVE-2026-45409",
+                source_file="pyproject.toml",
+            )
+        ],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[],
+        scan_type="static",
+        include_dynamic_section=False,
+    )
+
+    ScanConsole().print_summary(report)
+    output = capsys.readouterr().err
+
+    assert "Source: pyproject.toml" in output
+    assert "Application supply chain: medium" in output
+    assert "Scan reliability: 0" not in output
+    assert "Model behavior: 0" not in output
 
 
 def test_report_does_not_fail_for_warning_only_findings():
