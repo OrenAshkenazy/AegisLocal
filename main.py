@@ -60,6 +60,60 @@ SEVERITY_RANK = {
     Severity.HIGH: 3,
     Severity.CRITICAL: 4,
 }
+MODEL_BEHAVIOR_REMEDIATION = {
+    "Direct Prompt Injection": (
+        "Harden instruction hierarchy, reject user-supplied system/developer "
+        "directives, and add prompt-injection regression tests."
+    ),
+    "Jailbreak / Safety Bypass": (
+        "Tighten refusal policy, add jailbreak-specific guardrails, and test "
+        "roleplay, encoding, and split-response bypasses."
+    ),
+    "System Prompt Extraction": (
+        "Prevent disclosure of system/developer prompts, hidden policies, and "
+        "runtime configuration in direct, summarized, or transformed form."
+    ),
+    "Insecure Code Generation": (
+        "Require secure coding defaults, reject unsafe implementation patterns, "
+        "and add policy checks for generated code."
+    ),
+    "Toxicity": (
+        "Tune safety policy and moderation guardrails for protected-class abuse "
+        "and hateful content."
+    ),
+    "Harmful Instruction Compliance": (
+        "Strengthen refusal behavior for harmful operational instructions and "
+        "add safety checks before detailed procedural output."
+    ),
+    "PII Extraction": (
+        "Block requests for private personal data and require privacy-preserving "
+        "responses when identity data is requested."
+    ),
+    "PII Leakage": (
+        "Prevent replay of prior-user data, secrets, and private conversation "
+        "context; add memory/context isolation checks."
+    ),
+    "Sensitive Data Exfiltration": (
+        "Prevent secret extraction from prompts, retrieved context, and tool "
+        "outputs; redact credentials and enforce least-context exposure."
+    ),
+    "Tool Abuse": (
+        "Gate side-effecting tools behind explicit authorization, confirmation, "
+        "and scoped allowlists."
+    ),
+    "RAG Context Manipulation": (
+        "Treat retrieved content as untrusted data, strip embedded instructions, "
+        "and enforce system instruction precedence."
+    ),
+    "Policy Evasion": (
+        "Test multilingual, encoded, roleplay, and formatting bypasses; keep "
+        "policy enforcement invariant across presentation changes."
+    ),
+    "Multi-Turn Setup Injection": (
+        "Do not persist user-supplied future-trigger instructions that override "
+        "system policy; validate memory writes and conversation state."
+    ),
+}
 
 app = typer.Typer(help="AegisLocal local AI security scanner.")
 
@@ -283,8 +337,9 @@ def _build_risk_areas(
                 f"{', '.join(finding.payload_ids)}"
             ),
             owner="AI platform team",
-            remediation="Review failed payloads and tune prompts, policies, or guardrails.",
+            remediation=_model_behavior_remediation(finding.category),
             payload_ids=finding.payload_ids,
+            owasp_tags=finding.owasp_tags,
         )
         for finding in dynamic_findings
     ]
@@ -433,6 +488,13 @@ def _execution_error_remediation(error: ExecutionError) -> str:
     if error.source == ErrorSource.CONFIG:
         return "Fix scan configuration and re-run before trusting omitted results."
     return "Re-run the scan and review the failing scanner dependency or service."
+
+
+def _model_behavior_remediation(category: str) -> str:
+    return MODEL_BEHAVIOR_REMEDIATION.get(
+        category,
+        "Review failed payloads and tune prompts, policies, or guardrails.",
+    )
 
 
 def _build_incomplete_reason(
@@ -758,6 +820,8 @@ def _compact_risk(risk: ReportRisk) -> dict:
         compact["cves"] = risk.vulnerability_ids
     if risk.payload_ids:
         compact["payload_ids"] = risk.payload_ids
+    if risk.owasp_tags:
+        compact["owasp_tags"] = risk.owasp_tags
     if risk.subject_name:
         compact["subject"] = risk.subject_name
     if not risk.package_name and not risk.payload_ids and not risk.subject_name:

@@ -656,7 +656,9 @@ async def _evaluate_payload(
 
 
 def group_dynamic_findings(evaluations: Sequence[PayloadEvaluation]) -> List[GroupedFinding]:
-    grouped: Dict[str, Dict[str, object]] = defaultdict(lambda: {"ids": [], "severity": Severity.INFO})
+    grouped: Dict[str, Dict[str, object]] = defaultdict(
+        lambda: {"ids": [], "severity": Severity.INFO, "owasp_tags": set()}
+    )
     severity_rank = {
         Severity.INFO: 0,
         Severity.LOW: 1,
@@ -670,6 +672,9 @@ def group_dynamic_findings(evaluations: Sequence[PayloadEvaluation]) -> List[Gro
             continue
         category_group = grouped[evaluation.payload.category]
         category_group["ids"].append(evaluation.payload.id)
+        category_group["owasp_tags"].update(
+            tag for tag in evaluation.payload.tags if tag.startswith("OWASP:")
+        )
         if severity_rank[evaluation.payload.severity] > severity_rank[category_group["severity"]]:
             category_group["severity"] = evaluation.payload.severity
 
@@ -679,6 +684,7 @@ def group_dynamic_findings(evaluations: Sequence[PayloadEvaluation]) -> List[Gro
             severity=group["severity"],
             failed_count=len(group["ids"]),
             payload_ids=sorted(group["ids"]),
+            owasp_tags=sorted(group["owasp_tags"]),
         )
         for category, group in sorted(grouped.items())
     ]
