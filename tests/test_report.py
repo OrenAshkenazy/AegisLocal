@@ -11,7 +11,14 @@ from core.models import (
     Severity,
 )
 from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
-from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report, render_markdown_report
+from main import (
+    DEFAULT_ENDPOINT,
+    DEFAULT_MODEL,
+    build_report,
+    load_codeowners,
+    render_json_report,
+    render_markdown_report,
+)
 
 
 def test_report_passes_only_when_complete_and_no_findings():
@@ -91,8 +98,45 @@ def test_report_fails_security_when_findings_exist():
     assert report.security_result == "FAIL"
     assert report.production_decision == "BLOCK_PRODUCTION"
     assert report.execution_status == "COMPLETE"
-    assert report.findings.application_supply_chain[0].owner == "Platform team"
+    assert report.findings.application_supply_chain[0].owner == "Unassigned"
     assert report.passed_audit is False
+
+
+def test_report_uses_codeowners_for_source_file_owner(tmp_path):
+    (tmp_path / ".github").mkdir()
+    (tmp_path / ".github" / "CODEOWNERS").write_text(
+        "* @platform-team\n",
+        encoding="utf-8",
+    )
+    source_file = tmp_path / "uv.lock"
+    source_file.write_text("", encoding="utf-8")
+
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[
+            Finding(
+                severity=Severity.MEDIUM,
+                category="Dependency Vulnerability",
+                description="idna is vulnerable",
+                source_file=str(source_file),
+            )
+        ],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[],
+        codeowners=load_codeowners(tmp_path),
+        project_root=tmp_path,
+    )
+
+    assert report.findings.application_supply_chain[0].owner == "@platform-team"
 
 
 def test_static_report_keeps_common_output_sections():
@@ -138,6 +182,46 @@ def test_static_report_keeps_common_output_sections():
         "model_license",
         "scan_reliability",
     }
+
+
+def test_compact_json_report_contains_actions_not_internal_junk():
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[
+            Finding(
+                severity=Severity.MEDIUM,
+                category="Dependency Vulnerability",
+                description="idna==3.13 is affected by CVE-2026-45409.",
+                package_name="idna",
+                package_version="3.13",
+                fixed_version="3.15",
+                vulnerability_id="CVE-2026-45409",
+            )
+        ],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[],
+        scan_type="static",
+        include_dynamic_section=False,
+    )
+
+    rendered = render_json_report(report)
+
+    assert '"target_endpoint"' not in rendered
+    assert '"dynamic_assessments"' not in rendered
+    assert '"license_coverage"' not in rendered
+    assert '"package": "idna"' in rendered
+    assert '"current_version": "3.13"' in rendered
+    assert '"fixed_version": "3.15"' in rendered
+    assert '"action": "Upgrade idna to 3.15 or later"' in rendered
 
 
 def test_report_does_not_fail_for_warning_only_findings():

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import fnmatch
+import json
 import time
 from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
@@ -48,6 +50,8 @@ DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_SBOM_FILE = "bom.sbom.cdx.json"
 DEFAULT_AIBOM_FILE = "bom.aibom.cdx.json"
 SCAN_MODES = {"static", "dynamic", "licenses", "all"}
+REPORT_FORMATS = {"human", "json"}
+DEFAULT_OWNER = "Unassigned"
 SEVERITY_RANK = {
     Severity.INFO: 0,
     Severity.LOW: 1,
@@ -93,6 +97,8 @@ def build_report(
     include_dynamic_section: bool = True,
     include_license_section: bool = False,
     scan_duration_seconds: float = 0.0,
+    codeowners: Optional[Sequence[tuple[str, list[str]]]] = None,
+    project_root: Optional[Path] = None,
 ) -> ScanReport:
     static_findings = list(static_findings or [])
     dynamic_findings = list(dynamic_findings or [])
@@ -130,6 +136,8 @@ def build_report(
         dynamic_findings=dynamic_findings,
         license_findings=license_findings,
         execution_errors=execution_errors,
+        codeowners=codeowners or [],
+        project_root=project_root,
     )
     incomplete_reason = _build_incomplete_reason(
         execution_errors=execution_errors,
@@ -222,19 +230,47 @@ def _build_risk_areas(
     dynamic_findings: Sequence[GroupedFinding],
     license_findings: Sequence[Finding],
     execution_errors: Sequence[ExecutionError],
+    codeowners: Sequence[tuple[str, list[str]]],
+    project_root: Optional[Path],
 ) -> RiskAreas:
     application_supply_chain: list[ReportRisk] = [
-        _risk_from_finding(finding, owner="Platform team")
+        _risk_from_finding(
+            finding,
+            owner=_owner_for_finding(
+                finding,
+                codeowners=codeowners,
+                project_root=project_root,
+                fallback=DEFAULT_OWNER,
+            ),
+        )
         for finding in static_findings
     ]
     model_license: list[ReportRisk] = []
 
     for finding in license_findings:
         if finding.subject_type == "model" or "Model License" in finding.category:
-            model_license.append(_risk_from_finding(finding, owner="Security team"))
+            model_license.append(
+                _risk_from_finding(
+                    finding,
+                    owner=_owner_for_finding(
+                        finding,
+                        codeowners=codeowners,
+                        project_root=project_root,
+                        fallback=DEFAULT_OWNER,
+                    ),
+                )
+            )
         else:
             application_supply_chain.append(
-                _risk_from_finding(finding, owner="Platform team")
+                _risk_from_finding(
+                    finding,
+                    owner=_owner_for_finding(
+                        finding,
+                        codeowners=codeowners,
+                        project_root=project_root,
+                        fallback=DEFAULT_OWNER,
+                    ),
+                )
             )
 
     model_behavior = [
@@ -284,7 +320,10 @@ def _build_risk_areas(
 def _risk_from_finding(finding: Finding, *, owner: str) -> ReportRisk:
     remediation = finding.remediation
     if finding.fixed_version and finding.package_name:
-        remediation = f"Upgrade {finding.package_name} to {finding.fixed_version} or later."
+        remediation = f"Upgrade {finding.package_name} to {finding.fixed_version} or later"
+    vulnerability_ids = finding.vulnerability_ids or []
+    if finding.vulnerability_id and finding.vulnerability_id not in vulnerability_ids:
+        vulnerability_ids = [finding.vulnerability_id, *vulnerability_ids]
     return ReportRisk(
         severity=finding.severity,
         category=finding.category,
@@ -293,7 +332,86 @@ def _risk_from_finding(finding: Finding, *, owner: str) -> ReportRisk:
         remediation=remediation,
         subject_name=finding.subject_name,
         package_name=finding.package_name,
+        package_version=finding.package_version,
+        fixed_version=finding.fixed_version,
+        vulnerability_ids=vulnerability_ids,
+        source_file=finding.source_file,
     )
+
+
+def load_codeowners(project_root: Path) -> list[tuple[str, list[str]]]:
+    for relative_path in (
+        ".github/CODEOWNERS",
+        "CODEOWNERS",
+        "docs/CODEOWNERS",
+    ):
+        path = project_root / relative_path
+        if path.exists():
+            return _parse_codeowners(path)
+    return []
+
+
+def _parse_codeowners(path: Path) -> list[tuple[str, list[str]]]:
+    entries: list[tuple[str, list[str]]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        entries.append((parts[0], parts[1:]))
+    return entries
+
+
+def _owner_for_finding(
+    finding: Finding,
+    *,
+    codeowners: Sequence[tuple[str, list[str]]],
+    project_root: Optional[Path],
+    fallback: str,
+) -> str:
+    if not finding.source_file or project_root is None:
+        return fallback
+    owners = _owners_for_path(
+        Path(finding.source_file),
+        project_root=project_root,
+        codeowners=codeowners,
+    )
+    return ", ".join(owners) if owners else fallback
+
+
+def _owners_for_path(
+    path: Path,
+    *,
+    project_root: Path,
+    codeowners: Sequence[tuple[str, list[str]]],
+) -> list[str]:
+    try:
+        relative_path = path.expanduser().resolve().relative_to(project_root)
+    except ValueError:
+        relative_path = path
+    normalized = relative_path.as_posix().lstrip("/")
+    matched: list[str] = []
+    for pattern, owners in codeowners:
+        if _codeowners_pattern_matches(pattern, normalized):
+            matched = owners
+    return matched
+
+
+def _codeowners_pattern_matches(pattern: str, relative_path: str) -> bool:
+    normalized_pattern = pattern.strip()
+    if not normalized_pattern:
+        return False
+    normalized_pattern = normalized_pattern.lstrip("/")
+    if normalized_pattern.endswith("/"):
+        return relative_path.startswith(normalized_pattern)
+    if "/" not in normalized_pattern:
+        return fnmatch.fnmatch(Path(relative_path).name, normalized_pattern) or fnmatch.fnmatch(
+            relative_path,
+            f"*/{normalized_pattern}",
+        )
+    return fnmatch.fnmatch(relative_path, normalized_pattern)
 
 
 def _execution_error_severity(error: ExecutionError) -> Severity:
@@ -560,6 +678,136 @@ def render_markdown_report(report: ScanReport) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_json_report(report: ScanReport) -> str:
+    return json.dumps(_compact_report(report), indent=2)
+
+
+def _compact_report(report: ScanReport) -> dict:
+    findings = [_compact_risk(risk) for risk in _all_report_risks(report)]
+    compact = {
+        "scan_type": report.scan_type,
+        "result": report.security_result.value,
+        "decision": report.production_decision.value,
+        "duration_seconds": report.scan_duration_seconds,
+        "summary": _compact_summary(report, findings),
+        "findings": findings,
+        "passed_audit": report.passed_audit,
+        "scanner_version": report.scanner_version,
+    }
+    if report.execution_errors:
+        compact["execution_errors"] = [
+            _without_empty_values(error.model_dump(mode="json"))
+            for error in report.execution_errors
+        ]
+    if report.dynamic_assessments:
+        compact["dynamic_assessments"] = [
+            _without_empty_values(assessment.model_dump(mode="json"))
+            for assessment in report.dynamic_assessments
+        ]
+    if report.dynamic_evidence:
+        compact["dynamic_evidence"] = [
+            _without_empty_values(evidence.model_dump(mode="json"))
+            for evidence in report.dynamic_evidence
+        ]
+    if report.license_coverage is not None:
+        compact["license_coverage"] = _without_empty_values(
+            report.license_coverage.model_dump(mode="json")
+        )
+    return compact
+
+
+def _all_report_risks(report: ScanReport) -> list[ReportRisk]:
+    return [
+        *report.findings.application_supply_chain,
+        *report.findings.model_behavior,
+        *report.findings.model_license,
+        *report.findings.scan_reliability,
+    ]
+
+
+def _compact_summary(report: ScanReport, findings: Sequence[dict]) -> dict:
+    severities = [
+        Severity(str(finding["severity"]))
+        for finding in findings
+        if finding.get("severity")
+    ]
+    summary = {
+        "total_findings": len(findings),
+        "reason": _human_report_reason(report),
+    }
+    if severities:
+        summary["highest_severity"] = max(severities, key=lambda severity: SEVERITY_RANK[severity]).value
+    return summary
+
+
+def _compact_risk(risk: ReportRisk) -> dict:
+    compact = {
+        "severity": risk.severity.value,
+        "category": risk.category,
+        "owner": risk.owner,
+        "action": risk.remediation,
+    }
+    if risk.package_name:
+        compact["package"] = risk.package_name
+    if risk.package_version:
+        compact["current_version"] = risk.package_version
+    if risk.fixed_version:
+        compact["fixed_version"] = risk.fixed_version
+    if risk.vulnerability_ids:
+        compact["cves"] = risk.vulnerability_ids
+    if risk.payload_ids:
+        compact["payload_ids"] = risk.payload_ids
+    if risk.subject_name:
+        compact["subject"] = risk.subject_name
+    if not risk.package_name and not risk.payload_ids and not risk.subject_name:
+        compact["description"] = risk.description
+    return _without_empty_values(compact)
+
+
+def _human_report_reason(report: ScanReport) -> str:
+    blocking = [
+        risk
+        for risk in _all_report_risks(report)
+        if _severity_at_least(risk.severity, Severity.MEDIUM)
+    ]
+    if report.scan_type == "static" and blocking:
+        severities: dict[str, int] = {}
+        for risk in blocking:
+            severity = risk.severity.value.lower()
+            severities[severity] = severities.get(severity, 0) + 1
+        severity_text = _severity_label_phrase(severities)
+        noun = "vulnerability" if len(blocking) == 1 else "vulnerabilities"
+        return (
+            f"{len(blocking)} confirmed {severity_text} dependency {noun} "
+            "must be fixed before staging"
+        )
+    return report.executive_summary.reason.rstrip(".")
+
+
+def _severity_count_phrase(severities: dict[str, int]) -> str:
+    ordered = ["critical", "high", "medium", "low", "info"]
+    return ", ".join(
+        f"{count} {severity}" if count > 1 else severity
+        for severity in ordered
+        if (count := severities.get(severity, 0))
+    )
+
+
+def _severity_label_phrase(severities: dict[str, int]) -> str:
+    populated = [severity for severity, count in severities.items() if count]
+    if len(populated) == 1:
+        return populated[0]
+    return _severity_count_phrase(severities)
+
+
+def _without_empty_values(data: dict) -> dict:
+    return {
+        key: value
+        for key, value in data.items()
+        if value is not None and value != [] and value != {}
+    }
+
+
 def _markdown_risk_area(title: str, risks: Sequence[ReportRisk]) -> list[str]:
     lines = [f"### {title}"]
     if not risks:
@@ -599,6 +847,7 @@ async def run_scan(
 ) -> ScanReport:
     start = time.monotonic()
     project_root = project_root.expanduser().resolve()
+    codeowners = load_codeowners(project_root)
 
     # Parse once, pass to engines to avoid redundant I/O
     manifest_files = discover_manifest_files(project_root)
@@ -708,6 +957,8 @@ async def run_scan(
         include_dynamic_section=run_dynamic,
         include_license_section=license_scan,
         scan_duration_seconds=round(duration, 2),
+        codeowners=codeowners,
+        project_root=project_root,
     )
 
 
@@ -920,7 +1171,17 @@ def scan(
         False,
         "--quiet",
         "-q",
-        help="Suppress all terminal UI. JSON report only.",
+        help="Suppress terminal UI. Use with --json for machine-readable output.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print compact JSON report instead of the human report.",
+    ),
+    output_format: str = typer.Option(
+        "human",
+        "--format",
+        help="Report output format: human or json.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -932,7 +1193,7 @@ def scan(
         None,
         "--output-file",
         "-o",
-        help="Write JSON report to file (in addition to stdout).",
+        help="Write compact JSON report to file.",
     ),
     markdown_output_file: Optional[Path] = typer.Option(
         None,
@@ -943,8 +1204,14 @@ def scan(
     if quiet and verbose:
         typer.echo("Error: --quiet and --verbose are mutually exclusive.", err=True)
         raise typer.Exit(code=2)
+    normalized_format = output_format.lower()
+    if normalized_format not in REPORT_FORMATS:
+        allowed = ", ".join(sorted(REPORT_FORMATS))
+        typer.echo(f"Error: --format must be one of: {allowed}", err=True)
+        raise typer.Exit(code=2)
+    emit_json = json_output or normalized_format == "json"
 
-    console = ScanConsole(quiet=quiet, verbose=verbose)
+    console = ScanConsole(quiet=quiet or emit_json, verbose=verbose)
     run_static, run_dynamic, effective_license_scan, effective_generate_bom = _scan_mode_flags(
         scan_mode,
         license_scan,
@@ -976,10 +1243,11 @@ def scan(
         )
     )
 
-    console.print_summary(report)
-
-    report_json = report.model_dump_json(indent=2)
-    typer.echo(report_json)
+    report_json = render_json_report(report)
+    if emit_json:
+        typer.echo(report_json)
+    else:
+        console.print_summary(report)
 
     if output_file is not None:
         output_file.write_text(report_json, encoding="utf-8")

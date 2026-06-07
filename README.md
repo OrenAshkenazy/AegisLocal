@@ -177,13 +177,18 @@ ollama pull llama3.2:1b
 --generate-bom / --no-generate-bom
                                   Generate missing default SBOM/AIBOM files for
                                   License Policy Review.
---output-file PATH                Write JSON report to file.
+--json                            Print compact JSON instead of human report.
+--format [human|json]             Select report output format.
+--output-file PATH                Write compact JSON report to file.
 --markdown-output-file PATH       Write compact Markdown report to file.
 ```
 
 ## Report Semantics
 
-AegisLocal separates confirmed security outcomes from scan reliability:
+AegisLocal prints a human-readable report by default. Use `--json` or
+`--format json` for a compact machine-readable report, and `--output-file` to
+write that JSON to disk. The report separates confirmed security outcomes from
+scan reliability:
 
 - `security_result`: `PASS`, `FAIL`, or `UNKNOWN`
 - `production_decision`: `PASS`, `WARN`, `BLOCK_STAGING`, `BLOCK_PRODUCTION`,
@@ -197,6 +202,10 @@ AegisLocal separates confirmed security outcomes from scan reliability:
 
 Execution errors are printed to stderr while the scan runs and are also included
 in the JSON report under `execution_errors`.
+
+Finding owners are resolved from `.github/CODEOWNERS`, `CODEOWNERS`, or
+`docs/CODEOWNERS` when a finding has a source file. If no CODEOWNERS entry
+matches, the owner is reported as `Unassigned`.
 
 Dynamic findings are grouped by category and include counts plus payload IDs.
 Each failed or unknown dynamic payload also gets a compact confidence assessment

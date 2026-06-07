@@ -131,6 +131,10 @@ class ReportRisk(BaseModel):
     payload_ids: List[str] = Field(default_factory=list)
     subject_name: Optional[str] = None
     package_name: Optional[str] = None
+    package_version: Optional[str] = None
+    fixed_version: Optional[str] = None
+    vulnerability_ids: List[str] = Field(default_factory=list)
+    source_file: Optional[str] = None
 
 
 class RiskAreas(BaseModel):
