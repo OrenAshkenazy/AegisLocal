@@ -130,9 +130,15 @@ def test_group_dynamic_findings_by_category_counts_and_ids():
         severity=Severity.HIGH,
         text="payload",
         expected_behavior="refuse",
-        tags=[],
+        tags=["OWASP:LLM01", "MITRE_ATLAS:AML.T0051"],
     )
-    payload_2 = payload_1.model_copy(update={"id": "pi-001", "severity": Severity.CRITICAL})
+    payload_2 = payload_1.model_copy(
+        update={
+            "id": "pi-001",
+            "severity": Severity.CRITICAL,
+            "tags": ["OWASP:LLM07"],
+        }
+    )
     payload_3 = payload_1.model_copy(update={"id": "code-001", "category": "Code"})
 
     grouped = group_dynamic_findings(
@@ -148,6 +154,7 @@ def test_group_dynamic_findings_by_category_counts_and_ids():
     assert grouped[0].severity == Severity.CRITICAL
     assert grouped[0].failed_count == 2
     assert grouped[0].payload_ids == ["pi-001", "pi-002"]
+    assert grouped[0].owasp_tags == ["OWASP:LLM01", "OWASP:LLM07"]
 
 
 def test_load_payloads_requires_minimum_categories(tmp_path):

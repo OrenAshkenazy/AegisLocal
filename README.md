@@ -268,10 +268,11 @@ Compact JSON uses the same finding model without null placeholders:
 }
 ```
 
-Dynamic findings are grouped by category and include counts plus payload IDs.
-Each failed or unknown dynamic payload also gets a compact confidence assessment
-with `payload_id`, `verdict`, `confidence`, `judge_agreement`, and
-`evidence_available`. Raw model responses are not included by default.
+Dynamic findings are grouped by payload category and include failed payload IDs,
+OWASP tags, and high-level mitigation guidance. Each failed or unknown dynamic
+payload also gets a compact confidence assessment with `payload_id`, `verdict`,
+`confidence`, `judge_agreement`, and `evidence_available`. Raw model responses
+are not included by default.
 
 JSON findings include an `action` field with the exact remediation, such as
 `Upgrade idna to 3.15 or later`. License Policy Review warnings are still shown

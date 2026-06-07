@@ -187,6 +187,8 @@ def _risk_title(risk: ReportRisk) -> str:
             f"{risk.package_name} {risk.package_version} -> "
             f"upgrade to {risk.fixed_version} or later"
         )
+    if risk.payload_ids and risk.category != "Scan Reliability":
+        return f"{risk.category} failed"
     if risk.remediation:
         return risk.remediation.rstrip(".")
     return risk.description
@@ -194,6 +196,11 @@ def _risk_title(risk: ReportRisk) -> str:
 
 def _risk_details(risk: ReportRisk) -> list[str]:
     details: list[str] = []
+    if risk.payload_ids and risk.category != "Scan Reliability":
+        details.append(f"Payload type: {risk.category}")
+        details.append(f"Payloads: {', '.join(risk.payload_ids)}")
+    if risk.owasp_tags:
+        details.append(f"OWASP: {', '.join(_display_owasp_tags(risk.owasp_tags))}")
     if risk.vulnerability_ids:
         label = "CVE" if len(risk.vulnerability_ids) == 1 else "CVEs"
         details.append(f"{label}: {', '.join(risk.vulnerability_ids)}")
@@ -203,7 +210,13 @@ def _risk_details(risk: ReportRisk) -> list[str]:
         if risk.owner == "Unassigned":
             owner_detail += " (no CODEOWNERS match)"
         details.append(owner_detail)
+    if risk.payload_ids and risk.category != "Scan Reliability" and risk.remediation:
+        details.append(f"Mitigation: {risk.remediation.rstrip('.')}")
     return details
+
+
+def _display_owasp_tags(tags: list[str]) -> list[str]:
+    return [tag.removeprefix("OWASP:") for tag in tags]
 
 
 def _count_summary(risks: list[ReportRisk]) -> str:
