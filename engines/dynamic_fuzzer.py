@@ -793,6 +793,12 @@ async def run_dynamic_scan(
             primary_judge,
             timeout_seconds=judge_timeout_seconds,
         )
+        if fallback_judge:
+            fallback_errors = await calibrate_judge(
+                fallback_judge,
+                timeout_seconds=judge_timeout_seconds,
+            )
+            calibration_errors.extend(fallback_errors)
         if calibration_errors:
             return [], [*errors, *calibration_errors], [], []
 

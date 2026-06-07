@@ -147,6 +147,7 @@ def build_report(
     dynamic_assessments=None,
     license_findings=None,
     license_coverage=None,
+    judge_timeout_seconds: Optional[float] = None,
     scan_type: str = "all",
     include_static_section: bool = True,
     include_dynamic_section: bool = True,
@@ -212,6 +213,9 @@ def build_report(
         target_model=target_model if include_dynamic_section else None,
         target_timeout_seconds=(
             target_timeout_seconds if include_dynamic_section else None
+        ),
+        judge_timeout_seconds=(
+            judge_timeout_seconds if include_dynamic_section else None
         ),
         dynamic_concurrency=dynamic_concurrency if include_dynamic_section else None,
         judge_endpoint=judge_endpoint if include_dynamic_section else None,
@@ -1008,6 +1012,7 @@ async def run_scan(
         target_endpoint=target_endpoint,
         target_model=target_model,
         target_timeout_seconds=target_timeout_seconds,
+        judge_timeout_seconds=judge_timeout_seconds,
         dynamic_concurrency=dynamic_concurrency,
         judge_endpoint=judge_endpoint,
         judge_model=judge_model,

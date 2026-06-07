@@ -164,6 +164,7 @@ class ScanReport(BaseModel):
     target_endpoint: Optional[HttpUrl] = None
     target_model: Optional[str] = None
     target_timeout_seconds: Optional[float] = None
+    judge_timeout_seconds: Optional[float] = None
     dynamic_concurrency: Optional[int] = None
     judge_endpoint: Optional[HttpUrl] = None
     judge_model: Optional[str] = None
