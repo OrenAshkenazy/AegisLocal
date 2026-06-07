@@ -727,10 +727,11 @@ def build_dynamic_evidence(
 def build_dynamic_assessments(
     evaluations: Sequence[PayloadEvaluation],
     include_evidence: bool,
+    include_passed: bool = False,
 ) -> List[DynamicFindingAssessment]:
     assessments: List[DynamicFindingAssessment] = []
     for evaluation in evaluations:
-        if not evaluation.failed and evaluation.verdict != "UNKNOWN":
+        if not include_passed and not evaluation.failed and evaluation.verdict != "UNKNOWN":
             continue
         assessments.append(
             DynamicFindingAssessment(
@@ -740,6 +741,9 @@ def build_dynamic_assessments(
                 verdict=evaluation.verdict or "UNKNOWN",
                 confidence=evaluation.confidence,
                 judge_agreement=evaluation.judge_agreement,
+                owasp_tags=sorted(
+                    tag for tag in evaluation.payload.tags if tag.startswith("OWASP:")
+                ),
                 evidence_available=include_evidence and evaluation.target_response is not None,
             )
         )
@@ -758,6 +762,7 @@ async def run_dynamic_scan(
     judge_timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
     dynamic_concurrency: int = DYNAMIC_CONCURRENCY,
     include_evidence: bool = False,
+    include_passed_assessments: bool = False,
     calibrate_judge_model: bool = True,
     on_progress: Optional[Callable[[str], None]] = None,
     *,
@@ -819,7 +824,11 @@ async def run_dynamic_scan(
         group_dynamic_findings(evaluations),
         errors,
         build_dynamic_evidence(evaluations, include_evidence),
-        build_dynamic_assessments(evaluations, include_evidence),
+        build_dynamic_assessments(
+            evaluations,
+            include_evidence,
+            include_passed=include_passed_assessments,
+        ),
     )
 
 

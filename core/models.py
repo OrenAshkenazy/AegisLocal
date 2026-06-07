@@ -103,6 +103,7 @@ class DynamicFindingAssessment(BaseModel):
     verdict: str
     confidence: str
     judge_agreement: str
+    owasp_tags: List[str] = Field(default_factory=list)
     evidence_available: bool = False
 
 

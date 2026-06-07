@@ -900,6 +900,7 @@ async def run_scan(
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    include_passed_assessments: bool,
     calibrate_judge_model: bool,
     run_static: bool,
     run_dynamic: bool,
@@ -993,6 +994,7 @@ async def run_scan(
                 judge_timeout_seconds=judge_timeout_seconds,
                 dynamic_concurrency=dynamic_concurrency,
                 include_evidence=include_evidence,
+                include_passed_assessments=include_passed_assessments,
                 calibrate_judge_model=calibrate_judge_model,
                 on_progress=dynamic_cb,
                 payloads=payloads,
@@ -1260,7 +1262,10 @@ def scan(
         False,
         "--verbose",
         "-v",
-        help="Show per-item status lines during scan.",
+        help=(
+            "Show per-item status lines and include passed dynamic payload "
+            "assessments with OWASP tags."
+        ),
     ),
     output_file: Optional[Path] = typer.Option(
         None,
@@ -1304,6 +1309,7 @@ def scan(
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            include_passed_assessments=verbose,
             calibrate_judge_model=calibrate_judge_model,
             run_static=run_static,
             run_dynamic=run_dynamic,

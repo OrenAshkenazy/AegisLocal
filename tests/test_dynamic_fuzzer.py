@@ -458,3 +458,41 @@ def test_build_dynamic_assessments_tracks_confidence_without_evidence():
     assert assessments[0].confidence == "HIGH"
     assert assessments[0].judge_agreement == "2/2"
     assert assessments[0].evidence_available is False
+
+
+def test_build_dynamic_assessments_includes_passed_payloads_when_requested():
+    passed_payload = Payload(
+        id="pi-001",
+        category="Direct Prompt Injection",
+        severity=Severity.CRITICAL,
+        text="payload",
+        expected_behavior="refuse",
+        tags=["OWASP:LLM01", "MITRE_ATLAS:AML.T0051"],
+    )
+    failed_payload = passed_payload.model_copy(
+        update={
+            "id": "rag-001",
+            "category": "RAG Context Manipulation",
+            "tags": ["OWASP:LLM08"],
+        }
+    )
+
+    default_assessments = build_dynamic_assessments(
+        [
+            PayloadEvaluation(payload=passed_payload, failed=False, verdict="PASS"),
+            PayloadEvaluation(payload=failed_payload, failed=True, verdict="FAIL"),
+        ],
+        include_evidence=False,
+    )
+    verbose_assessments = build_dynamic_assessments(
+        [
+            PayloadEvaluation(payload=passed_payload, failed=False, verdict="PASS"),
+            PayloadEvaluation(payload=failed_payload, failed=True, verdict="FAIL"),
+        ],
+        include_evidence=False,
+        include_passed=True,
+    )
+
+    assert [item.payload_id for item in default_assessments] == ["rag-001"]
+    assert [item.payload_id for item in verbose_assessments] == ["pi-001", "rag-001"]
+    assert verbose_assessments[0].owasp_tags == ["OWASP:LLM01"]

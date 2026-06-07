@@ -167,6 +167,8 @@ ollama pull mistral:latest
                                   License Policy Review.
 --json                            Print compact JSON instead of human report.
 --format [human|json]             Select report output format.
+--verbose                         Show per-item status lines and include passed
+                                  dynamic payload assessments with OWASP tags.
 --output-file PATH                Write compact JSON report to file.
 --markdown-output-file PATH       Write compact Markdown report to file.
 ```
@@ -273,6 +275,11 @@ OWASP tags, and high-level mitigation guidance. Each failed or unknown dynamic
 payload also gets a compact confidence assessment with `payload_id`, `verdict`,
 `confidence`, `judge_agreement`, and `evidence_available`. Raw model responses
 are not included by default.
+
+Use `--verbose` when you also need passed dynamic payloads in the human report
+and JSON assessments. Verbose passed entries include the payload ID, payload
+category, and OWASP tags, but still omit raw model responses unless
+`--include-evidence` is also set.
 
 JSON findings include an `action` field with the exact remediation, such as
 `Upgrade idna to 3.15 or later`. License Policy Review warnings are still shown

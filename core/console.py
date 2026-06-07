@@ -118,6 +118,14 @@ class ScanConsole:
                 lines.append("\n")
         if report.execution_errors:
             lines.append(f"\nExecution errors: {len(report.execution_errors)}")
+
+        passed_payload_lines = _passed_payload_lines(report) if self._verbose else []
+        if passed_payload_lines:
+            lines.append("\n\nPassed payloads\n", style="bold")
+            for index, payload_line in enumerate(passed_payload_lines):
+                lines.append(payload_line)
+                if index != len(passed_payload_lines) - 1:
+                    lines.append("\n")
         lines.append("\n\nNext step\n", style="bold")
         lines.append(_next_step(report))
 
@@ -217,6 +225,20 @@ def _risk_details(risk: ReportRisk) -> list[str]:
 
 def _display_owasp_tags(tags: list[str]) -> list[str]:
     return [tag.removeprefix("OWASP:") for tag in tags]
+
+
+def _passed_payload_lines(report: ScanReport) -> list[str]:
+    lines: list[str] = []
+    for assessment in report.dynamic_assessments:
+        if assessment.verdict != "PASS":
+            continue
+        tag_text = (
+            f" · OWASP: {', '.join(_display_owasp_tags(assessment.owasp_tags))}"
+            if assessment.owasp_tags
+            else ""
+        )
+        lines.append(f"{assessment.payload_id} · {assessment.category}{tag_text}")
+    return lines
 
 
 def _count_summary(risks: list[ReportRisk]) -> str:

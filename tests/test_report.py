@@ -510,6 +510,47 @@ def test_human_dynamic_report_shows_payload_tags_and_mitigation(capsys):
     assert '"OWASP:LLM08"' in rendered
 
 
+def test_verbose_human_report_shows_passed_payload_tags(capsys):
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[],
+        dynamic_assessments=[
+            DynamicFindingAssessment(
+                payload_id="pi-001",
+                category="Direct Prompt Injection",
+                severity=Severity.CRITICAL,
+                verdict="PASS",
+                confidence="HIGH",
+                judge_agreement="1/1",
+                owasp_tags=["OWASP:LLM01"],
+                evidence_available=False,
+            )
+        ],
+        dynamic_evidence=[],
+        execution_errors=[],
+        scan_type="dynamic",
+        include_static_section=False,
+    )
+
+    ScanConsole().print_summary(report)
+    default_output = capsys.readouterr().err
+    ScanConsole(verbose=True).print_summary(report)
+    verbose_output = capsys.readouterr().err
+
+    assert "Passed payloads" not in default_output
+    assert "Passed payloads" in verbose_output
+    assert "pi-001 · Direct Prompt Injection · OWASP: LLM01" in verbose_output
+
+
 def test_report_does_not_generate_none_package_remediation():
     report = build_report(
         target_endpoint=DEFAULT_ENDPOINT,
