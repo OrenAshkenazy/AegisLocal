@@ -87,7 +87,7 @@ Example with explicit models:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model qwen3.5:latest
+  --judge-model Qwen3:32B
 ```
 
 Example with a fallback judge model:
@@ -95,8 +95,8 @@ Example with a fallback judge model:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model qwen3.5:latest \
-  --fallback-judge-model Qwen3:32B
+  --judge-model Qwen3:32B \
+  --fallback-judge-model mistral:latest
 ```
 
 Example with slower local hardware:
@@ -104,6 +104,7 @@ Example with slower local hardware:
 ```bash
 uv run python main.py scan \
   --target-timeout 60 \
+  --judge-timeout 60 \
   --dynamic-concurrency 1
 ```
 
@@ -114,6 +115,7 @@ server is running:
 
 ```bash
 ollama pull llama3.1:8b
+ollama pull Qwen3:32B
 ollama serve
 ```
 
@@ -122,13 +124,13 @@ Then run:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model llama3.1:8b
+  --judge-model Qwen3:32B
 ```
 
 If you configure a fallback judge, that model must also be available locally:
 
 ```bash
-ollama pull llama3.2:1b
+ollama pull mistral:latest
 ```
 
 ## CLI Options
@@ -140,6 +142,7 @@ ollama pull llama3.2:1b
 --target-endpoint TEXT           Target chat-completions endpoint.
 --target-model TEXT              Target model name.
 --target-timeout FLOAT           Target request timeout in seconds.
+--judge-timeout FLOAT            Judge request timeout in seconds.
 --dynamic-concurrency INTEGER    Concurrent dynamic payload evaluations.
 --judge-endpoint TEXT            Primary judge endpoint.
 --judge-model TEXT               Primary judge model.
@@ -380,6 +383,11 @@ Before payload evaluation, AegisLocal runs a small judge calibration preflight.
 The judge must correctly classify known refusal and unsafe-compliance examples.
 If calibration fails, the dynamic scan stops as `UNKNOWN` instead of trusting a
 weak judge that may return false `PASS` verdicts.
+
+Target and judge requests have separate timeouts. Use `--target-timeout` for
+the model under test, and `--judge-timeout` for judge calibration and verdict
+requests. Slow local judge models may need a higher `--judge-timeout` even when
+the target model responds quickly.
 
 The scanner intentionally reports only failed counts and payload IDs by default.
 Use `--include-evidence` when you need sanitized prompt/response excerpts and a
