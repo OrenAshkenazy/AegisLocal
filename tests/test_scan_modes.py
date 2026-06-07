@@ -24,6 +24,7 @@ async def test_license_scan_mode_generates_missing_boms(tmp_path):
         fallback_judge_endpoint=None,
         fallback_judge_model=None,
         include_evidence=False,
+        calibrate_judge_model=True,
         run_static=False,
         run_dynamic=False,
         license_scan=True,
@@ -43,10 +44,12 @@ async def test_license_scan_mode_generates_missing_boms(tmp_path):
     assert report.target_model is None
     assert report.judge_endpoint is None
     assert report.judge_model is None
-    assert report.static_findings is None
-    assert report.dynamic_findings is None
-    assert report.dynamic_evidence is None
-    assert report.license_findings == []
+    assert report.findings.application_supply_chain == []
+    assert report.findings.model_behavior == []
+    assert report.findings.model_license == []
+    assert report.findings.scan_reliability == []
+    assert report.dynamic_assessments == []
+    assert report.dynamic_evidence == []
     assert report.license_coverage is not None
     assert report.license_coverage.dependencies_total == 1
     assert report.license_coverage.dependencies_missing_license_metadata == 1
@@ -83,6 +86,7 @@ async def test_license_scan_mode_uses_project_env_models_for_aibom(tmp_path):
         fallback_judge_endpoint=None,
         fallback_judge_model=None,
         include_evidence=False,
+        calibrate_judge_model=True,
         run_static=False,
         run_dynamic=False,
         license_scan=True,
@@ -121,6 +125,7 @@ async def test_license_scan_mode_regenerates_default_boms(tmp_path):
         fallback_judge_endpoint=None,
         fallback_judge_model=None,
         include_evidence=False,
+        calibrate_judge_model=True,
         run_static=False,
         run_dynamic=False,
         license_scan=True,
@@ -156,6 +161,7 @@ async def test_license_scan_mode_does_not_overwrite_explicit_boms(tmp_path):
         fallback_judge_endpoint=None,
         fallback_judge_model=None,
         include_evidence=False,
+        calibrate_judge_model=True,
         run_static=False,
         run_dynamic=False,
         license_scan=True,
@@ -193,6 +199,7 @@ async def test_license_scan_mode_expands_project_root_for_default_boms(tmp_path,
         fallback_judge_endpoint=None,
         fallback_judge_model=None,
         include_evidence=False,
+        calibrate_judge_model=True,
         run_static=False,
         run_dynamic=False,
         license_scan=True,

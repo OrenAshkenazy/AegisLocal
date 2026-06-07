@@ -30,6 +30,8 @@ dist/
 *.log
 logs/
 reports/
+bom.sbom.cdx.json
+bom.aibom.cdx.json
 
 # Editor and OS files
 .DS_Store
@@ -43,3 +45,4 @@ reports/
 
 # Internal Docs
 docs/
+.aegislocal/

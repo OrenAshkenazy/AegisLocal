@@ -26,6 +26,14 @@ class ExecutionStatus(str, Enum):
     SCAN_INCOMPLETE = "SCAN_INCOMPLETE"
 
 
+class ProductionDecision(str, Enum):
+    PASS = "PASS"
+    WARN = "WARN"
+    BLOCK_STAGING = "BLOCK_STAGING"
+    BLOCK_PRODUCTION = "BLOCK_PRODUCTION"
+    SCAN_INVALID = "SCAN_INVALID"
+
+
 class ErrorSource(str, Enum):
     STATIC = "static"
     DYNAMIC = "dynamic"
@@ -87,6 +95,16 @@ class DynamicEvidence(BaseModel):
     response_truncated: bool = False
 
 
+class DynamicFindingAssessment(BaseModel):
+    payload_id: str
+    category: str
+    severity: Severity
+    verdict: str
+    confidence: str
+    judge_agreement: str
+    evidence_available: bool = False
+
+
 class ExecutionError(BaseModel):
     source: ErrorSource
     message: str
@@ -104,6 +122,40 @@ class Payload(BaseModel):
     tags: List[str] = Field(default_factory=list)
 
 
+class ReportRisk(BaseModel):
+    severity: Severity
+    category: str
+    description: str
+    owner: str
+    remediation: Optional[str] = None
+    payload_ids: List[str] = Field(default_factory=list)
+    subject_name: Optional[str] = None
+    package_name: Optional[str] = None
+    package_version: Optional[str] = None
+    fixed_version: Optional[str] = None
+    vulnerability_ids: List[str] = Field(default_factory=list)
+    source_file: Optional[str] = None
+
+
+class RiskAreas(BaseModel):
+    application_supply_chain: List[ReportRisk] = Field(default_factory=list)
+    model_behavior: List[ReportRisk] = Field(default_factory=list)
+    model_license: List[ReportRisk] = Field(default_factory=list)
+    scan_reliability: List[ReportRisk] = Field(default_factory=list)
+
+
+class OwnerRemediation(BaseModel):
+    owner: str
+    actions: List[str] = Field(default_factory=list)
+
+
+class ExecutiveSummary(BaseModel):
+    decision: ProductionDecision
+    reason: str
+    top_risks: List[str] = Field(default_factory=list)
+    next_actions: List[str] = Field(default_factory=list)
+
+
 class ScanReport(BaseModel):
     scan_type: str = "all"
     target_endpoint: Optional[HttpUrl] = None
@@ -116,13 +168,16 @@ class ScanReport(BaseModel):
     fallback_judge_model: Optional[str] = None
     include_evidence: Optional[bool] = None
     security_result: SecurityResult
+    production_decision: ProductionDecision
+    executive_summary: ExecutiveSummary
     execution_status: ExecutionStatus
     status_message: str
-    static_findings: Optional[List[Finding]] = None
-    dynamic_findings: Optional[List[GroupedFinding]] = None
-    dynamic_evidence: Optional[List[DynamicEvidence]] = None
-    license_findings: Optional[List[Finding]] = None
+    incomplete_reason: Optional[str] = None
+    findings: RiskAreas = Field(default_factory=RiskAreas)
+    dynamic_assessments: List[DynamicFindingAssessment] = Field(default_factory=list)
+    dynamic_evidence: List[DynamicEvidence] = Field(default_factory=list)
     license_coverage: Optional[LicenseCoverage] = None
+    owner_remediation: List[OwnerRemediation] = Field(default_factory=list)
     execution_errors: List[ExecutionError] = Field(default_factory=list)
     passed_audit: bool
     scan_duration_seconds: float = 0.0
