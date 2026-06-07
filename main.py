@@ -168,13 +168,11 @@ def build_report(
             else "COMPLETE"
         ),
         incomplete_reason=incomplete_reason,
-        static_findings=static_findings if include_static_section else None,
-        dynamic_findings=dynamic_findings if include_dynamic_section else None,
-        dynamic_assessments=(
-            dynamic_assessments if include_dynamic_section else None
-        ),
-        dynamic_evidence=dynamic_evidence if include_dynamic_section else None,
-        license_findings=license_findings if include_license_section else None,
+        static_findings=static_findings,
+        dynamic_findings=dynamic_findings,
+        dynamic_assessments=dynamic_assessments,
+        dynamic_evidence=dynamic_evidence,
+        license_findings=license_findings,
         license_coverage=license_coverage if include_license_section else None,
         risk_areas=risk_areas,
         owner_remediation=owner_remediation,

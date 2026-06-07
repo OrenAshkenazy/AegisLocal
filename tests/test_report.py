@@ -95,6 +95,47 @@ def test_report_fails_security_when_findings_exist():
     assert report.passed_audit is False
 
 
+def test_static_report_keeps_common_output_sections():
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[
+            Finding(
+                severity=Severity.MEDIUM,
+                category="Dependency Vulnerability",
+                description="idna is vulnerable",
+            )
+        ],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[],
+        scan_type="static",
+        include_dynamic_section=False,
+        include_license_section=False,
+    )
+
+    dumped = report.model_dump(mode="json", exclude_none=True)
+
+    assert dumped["static_findings"]
+    assert dumped["dynamic_findings"] == []
+    assert dumped["dynamic_assessments"] == []
+    assert dumped["dynamic_evidence"] == []
+    assert dumped["license_findings"] == []
+    assert set(dumped["risk_areas"]) == {
+        "application_supply_chain",
+        "model_behavior",
+        "model_license",
+        "scan_reliability",
+    }
+
+
 def test_report_does_not_fail_for_warning_only_findings():
     report = build_report(
         target_endpoint=DEFAULT_ENDPOINT,

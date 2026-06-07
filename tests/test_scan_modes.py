@@ -44,9 +44,10 @@ async def test_license_scan_mode_generates_missing_boms(tmp_path):
     assert report.target_model is None
     assert report.judge_endpoint is None
     assert report.judge_model is None
-    assert report.static_findings is None
-    assert report.dynamic_findings is None
-    assert report.dynamic_evidence is None
+    assert report.static_findings == []
+    assert report.dynamic_findings == []
+    assert report.dynamic_assessments == []
+    assert report.dynamic_evidence == []
     assert report.license_findings == []
     assert report.license_coverage is not None
     assert report.license_coverage.dependencies_total == 1
