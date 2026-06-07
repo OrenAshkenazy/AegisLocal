@@ -190,7 +190,7 @@ AegisLocal separates confirmed security outcomes from scan reliability:
   or `SCAN_INVALID`
 - `executive_summary`: top-level decision, reason, top risks, and next actions
 - `execution_status`: `COMPLETE` or `SCAN_INCOMPLETE`
-- `risk_areas`: separate application supply-chain, model behavioral, model
+- `findings`: separate application supply-chain, model behavioral, model
   license, and scan reliability risks
 - `owner_remediation`: actions grouped by owning team
 - `passed_audit`: `true` only when the scan completed without failing findings
@@ -431,7 +431,8 @@ When using the default `bom.sbom.cdx.json` and `bom.aibom.cdx.json` paths,
 AegisLocal regenerates both files before reviewing licenses so the inventory
 matches the current project. Explicit files passed with `--sbom` or `--aibom`
 are treated as user-supplied evidence and are not overwritten. The JSON output
-for `scan licenses` is focused on `license_findings` and `license_coverage`;
+for `scan licenses` is focused on `findings.model_license`,
+`findings.application_supply_chain`, and `license_coverage`;
 model endpoint and dynamic-scan fields are omitted.
 
 The generated BOM files inventory dependencies and models. License values come

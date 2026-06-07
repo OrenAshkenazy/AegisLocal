@@ -168,13 +168,10 @@ def build_report(
             else "COMPLETE"
         ),
         incomplete_reason=incomplete_reason,
-        static_findings=static_findings,
-        dynamic_findings=dynamic_findings,
+        findings=risk_areas,
         dynamic_assessments=dynamic_assessments,
         dynamic_evidence=dynamic_evidence,
-        license_findings=license_findings,
         license_coverage=license_coverage if include_license_section else None,
-        risk_areas=risk_areas,
         owner_remediation=owner_remediation,
         execution_errors=execution_errors,
         passed_audit=passed_audit,
@@ -547,10 +544,10 @@ def render_markdown_report(report: ScanReport) -> str:
             )
 
     lines.extend(["", "## Risk Areas"])
-    lines.extend(_markdown_risk_area("Application supply chain risk", report.risk_areas.application_supply_chain))
-    lines.extend(_markdown_risk_area("Model behavioral risk", report.risk_areas.model_behavior))
-    lines.extend(_markdown_risk_area("Model license risk", report.risk_areas.model_license))
-    lines.extend(_markdown_risk_area("Scan reliability risk", report.risk_areas.scan_reliability))
+    lines.extend(_markdown_risk_area("Application supply chain risk", report.findings.application_supply_chain))
+    lines.extend(_markdown_risk_area("Model behavioral risk", report.findings.model_behavior))
+    lines.extend(_markdown_risk_area("Model license risk", report.findings.model_license))
+    lines.extend(_markdown_risk_area("Scan reliability risk", report.findings.scan_reliability))
 
     lines.extend(["", "## Remediation By Owner"])
     if report.owner_remediation:
@@ -981,7 +978,7 @@ def scan(
 
     console.print_summary(report)
 
-    report_json = report.model_dump_json(indent=2, exclude_none=True)
+    report_json = report.model_dump_json(indent=2)
     typer.echo(report_json)
 
     if output_file is not None:

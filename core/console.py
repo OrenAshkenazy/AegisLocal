@@ -93,12 +93,13 @@ class ScanConsole:
         lines.append(result.value, style=style)
         lines.append(f"\nDecision: {report.production_decision.value}")
         lines.append(f"\nDuration: {report.scan_duration_seconds:.1f}s")
-        if report.static_findings is not None:
-            lines.append(f"\nStatic findings: {len(report.static_findings)}")
-        if report.dynamic_findings is not None:
-            lines.append(f"\nDynamic findings: {len(report.dynamic_findings)}")
-        if report.license_findings is not None:
-            lines.append(f"\nLicense findings: {len(report.license_findings)}")
+        lines.append(
+            "\nFindings: "
+            f"{len(report.findings.application_supply_chain)} application, "
+            f"{len(report.findings.model_behavior)} behavior, "
+            f"{len(report.findings.model_license)} license, "
+            f"{len(report.findings.scan_reliability)} reliability"
+        )
         if report.license_coverage is not None:
             coverage = report.license_coverage
             lines.append(

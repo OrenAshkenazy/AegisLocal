@@ -169,13 +169,10 @@ class ScanReport(BaseModel):
     execution_status: ExecutionStatus
     status_message: str
     incomplete_reason: Optional[str] = None
-    static_findings: List[Finding] = Field(default_factory=list)
-    dynamic_findings: List[GroupedFinding] = Field(default_factory=list)
+    findings: RiskAreas = Field(default_factory=RiskAreas)
     dynamic_assessments: List[DynamicFindingAssessment] = Field(default_factory=list)
     dynamic_evidence: List[DynamicEvidence] = Field(default_factory=list)
-    license_findings: List[Finding] = Field(default_factory=list)
     license_coverage: Optional[LicenseCoverage] = None
-    risk_areas: RiskAreas = Field(default_factory=RiskAreas)
     owner_remediation: List[OwnerRemediation] = Field(default_factory=list)
     execution_errors: List[ExecutionError] = Field(default_factory=list)
     passed_audit: bool

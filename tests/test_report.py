@@ -91,7 +91,7 @@ def test_report_fails_security_when_findings_exist():
     assert report.security_result == "FAIL"
     assert report.production_decision == "BLOCK_PRODUCTION"
     assert report.execution_status == "COMPLETE"
-    assert report.risk_areas.application_supply_chain[0].owner == "Platform team"
+    assert report.findings.application_supply_chain[0].owner == "Platform team"
     assert report.passed_audit is False
 
 
@@ -121,14 +121,18 @@ def test_static_report_keeps_common_output_sections():
         include_license_section=False,
     )
 
-    dumped = report.model_dump(mode="json", exclude_none=True)
+    dumped = report.model_dump(mode="json")
 
-    assert dumped["static_findings"]
-    assert dumped["dynamic_findings"] == []
+    assert "static_findings" not in dumped
+    assert "dynamic_findings" not in dumped
+    assert "license_findings" not in dumped
+    assert dumped["findings"]["application_supply_chain"]
+    assert dumped["findings"]["model_behavior"] == []
+    assert dumped["findings"]["model_license"] == []
+    assert dumped["findings"]["scan_reliability"] == []
     assert dumped["dynamic_assessments"] == []
     assert dumped["dynamic_evidence"] == []
-    assert dumped["license_findings"] == []
-    assert set(dumped["risk_areas"]) == {
+    assert set(dumped["findings"]) == {
         "application_supply_chain",
         "model_behavior",
         "model_license",
@@ -241,10 +245,10 @@ def test_report_separates_risk_areas_and_owner_remediation():
         "verdict and no fallback judge was configured."
     )
     assert report.executive_summary.next_actions[0] == "Re-run with fallback judge."
-    assert len(report.risk_areas.application_supply_chain) == 1
-    assert len(report.risk_areas.model_behavior) == 1
-    assert len(report.risk_areas.model_license) == 1
-    assert len(report.risk_areas.scan_reliability) == 2
+    assert len(report.findings.application_supply_chain) == 1
+    assert len(report.findings.model_behavior) == 1
+    assert len(report.findings.model_license) == 1
+    assert len(report.findings.scan_reliability) == 2
     assert report.dynamic_assessments[0].judge_agreement == "2/2"
     assert {item.owner for item in report.owner_remediation} == {
         "AI platform team",
@@ -323,7 +327,7 @@ def test_report_does_not_generate_none_package_remediation():
         execution_errors=[],
     )
 
-    assert report.risk_areas.application_supply_chain[0].remediation is None
+    assert report.findings.application_supply_chain[0].remediation is None
 
 
 def test_incomplete_reason_does_not_mix_unrelated_payload_errors():
