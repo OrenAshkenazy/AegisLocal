@@ -399,19 +399,22 @@ async def evaluate_response(
     fallback_judge: Optional[JudgeConfig],
     judge_timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeDecision:
-    attempts: List[JudgeAttempt] = []
-    for judge_name, judge in (("primary", primary_judge), ("fallback", fallback_judge)):
-        if judge is None:
-            continue
-        attempts.append(
-            await _attempt_judge(
-                judge_name,
-                judge,
+    judges = [("primary", primary_judge)]
+    if fallback_judge is not None:
+        judges.append(("fallback", fallback_judge))
+
+    attempts = list(
+        await asyncio.gather(*(
+            _attempt_judge(
+                name,
+                j,
                 payload,
                 target_response,
                 judge_timeout_seconds,
             )
-        )
+            for name, j in judges
+        ))
+    )
 
     errors = [attempt.error for attempt in attempts if attempt.error is not None]
     valid_attempts = [
@@ -789,16 +792,14 @@ async def run_dynamic_scan(
             model=fallback_judge_model,
         )
     if calibrate_judge_model:
-        calibration_errors = await calibrate_judge(
-            primary_judge,
-            timeout_seconds=judge_timeout_seconds,
-        )
+        judges_to_calibrate = [primary_judge]
         if fallback_judge:
-            fallback_errors = await calibrate_judge(
-                fallback_judge,
-                timeout_seconds=judge_timeout_seconds,
-            )
-            calibration_errors.extend(fallback_errors)
+            judges_to_calibrate.append(fallback_judge)
+        calibration_results = await asyncio.gather(*(
+            calibrate_judge(j, timeout_seconds=judge_timeout_seconds)
+            for j in judges_to_calibrate
+        ))
+        calibration_errors = [err for res in calibration_results for err in res]
         if calibration_errors:
             return [], [*errors, *calibration_errors], [], []
 
