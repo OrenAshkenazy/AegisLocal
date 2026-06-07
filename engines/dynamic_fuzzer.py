@@ -397,12 +397,21 @@ async def evaluate_response(
     target_response: str,
     primary_judge: JudgeConfig,
     fallback_judge: Optional[JudgeConfig],
+    judge_timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeDecision:
     attempts: List[JudgeAttempt] = []
     for judge_name, judge in (("primary", primary_judge), ("fallback", fallback_judge)):
         if judge is None:
             continue
-        attempts.append(await _attempt_judge(judge_name, judge, payload, target_response))
+        attempts.append(
+            await _attempt_judge(
+                judge_name,
+                judge,
+                payload,
+                target_response,
+                judge_timeout_seconds,
+            )
+        )
 
     errors = [attempt.error for attempt in attempts if attempt.error is not None]
     valid_attempts = [
@@ -482,9 +491,15 @@ async def _attempt_judge(
     judge: JudgeConfig,
     payload: Payload,
     target_response: str,
+    timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeAttempt:
     try:
-        decision = await _call_judge(payload, target_response, judge)
+        decision = await _call_judge(
+            payload,
+            target_response,
+            judge,
+            timeout_seconds=timeout_seconds,
+        )
         if decision.verdict is not None:
             return JudgeAttempt(name=judge_name, judge=judge, decision=decision)
         error = ExecutionError(
@@ -515,8 +530,9 @@ async def _call_judge(
     payload: Payload,
     target_response: str,
     judge: JudgeConfig,
+    timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeDecision:
-    timeout = aiohttp.ClientTimeout(total=JUDGE_TIMEOUT_SECONDS)
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     user_content = (
         f"Payload ID: {payload.id}\n"
         f"Category: {payload.category}\n"
@@ -541,14 +557,22 @@ async def _call_judge(
     return JudgeDecision(verdict=verdict, reason=reason)
 
 
-async def calibrate_judge(judge: JudgeConfig) -> List[ExecutionError]:
+async def calibrate_judge(
+    judge: JudgeConfig,
+    timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
+) -> List[ExecutionError]:
     async def calibrate_case(
         payload: Payload,
         target_response: str,
         expected_verdict: str,
     ) -> Optional[ExecutionError]:
         try:
-            decision = await _call_judge(payload, target_response, judge)
+            decision = await _call_judge(
+                payload,
+                target_response,
+                judge,
+                timeout_seconds=timeout_seconds,
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
             error = ExecutionError(
                 source=ErrorSource.DYNAMIC,
@@ -589,6 +613,7 @@ async def _evaluate_payload(
     fallback_judge: Optional[JudgeConfig],
     semaphore: asyncio.Semaphore,
     target_timeout_seconds: float,
+    judge_timeout_seconds: float,
 ) -> PayloadEvaluation:
     async with semaphore:
         target_response, target_error = await attack_target(
@@ -605,6 +630,7 @@ async def _evaluate_payload(
             target_response,
             primary_judge,
             fallback_judge,
+            judge_timeout_seconds,
         )
         if decision.verdict is None:
             return PayloadEvaluation(
@@ -723,6 +749,7 @@ async def run_dynamic_scan(
     fallback_judge_endpoint: Optional[str] = None,
     fallback_judge_model: Optional[str] = None,
     target_timeout_seconds: float = TARGET_TIMEOUT_SECONDS,
+    judge_timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
     dynamic_concurrency: int = DYNAMIC_CONCURRENCY,
     include_evidence: bool = False,
     calibrate_judge_model: bool = True,
@@ -751,7 +778,10 @@ async def run_dynamic_scan(
             model=fallback_judge_model,
         )
     if calibrate_judge_model:
-        calibration_errors = await calibrate_judge(primary_judge)
+        calibration_errors = await calibrate_judge(
+            primary_judge,
+            timeout_seconds=judge_timeout_seconds,
+        )
         if calibration_errors:
             return [], [*errors, *calibration_errors], [], []
 
@@ -764,6 +794,7 @@ async def run_dynamic_scan(
             fallback_judge,
             semaphore,
             target_timeout_seconds,
+            judge_timeout_seconds,
         )
         if on_progress:
             verdict = result.verdict or "ERROR"

@@ -265,6 +265,40 @@ def test_human_report_shows_source_and_hides_zero_counts(capsys):
     assert "Model behavior: 0" not in output
 
 
+def test_human_dynamic_report_does_not_apply_codeowners_to_runtime_findings(capsys):
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[
+            ExecutionError(
+                source=ErrorSource.DYNAMIC,
+                message="Judge calibration failed",
+                payload_id="judge-calibration-refusal",
+                detail="model=qwen3.5:latest expected=PASS actual=UNKNOWN",
+            )
+        ],
+        scan_type="dynamic",
+        include_static_section=False,
+    )
+
+    ScanConsole().print_summary(report)
+    output = capsys.readouterr().err
+
+    assert "Configure a fallback judge and re-run the dynamic scan" in output
+    assert "Owner (from CODEOWNERS)" not in output
+    assert "Owner:" not in output
+
+
 def test_report_does_not_fail_for_warning_only_findings():
     report = build_report(
         target_endpoint=DEFAULT_ENDPOINT,

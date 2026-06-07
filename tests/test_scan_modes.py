@@ -5,7 +5,11 @@ from pathlib import Path
 
 from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, run_scan
 from core.console import ScanConsole
-from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
+from engines.dynamic_fuzzer import (
+    DYNAMIC_CONCURRENCY,
+    JUDGE_TIMEOUT_SECONDS,
+    TARGET_TIMEOUT_SECONDS,
+)
 
 
 async def test_license_scan_mode_generates_missing_boms(tmp_path):
@@ -18,6 +22,7 @@ async def test_license_scan_mode_generates_missing_boms(tmp_path):
         target_endpoint=DEFAULT_ENDPOINT,
         target_model=DEFAULT_MODEL,
         target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        judge_timeout_seconds=JUDGE_TIMEOUT_SECONDS,
         dynamic_concurrency=DYNAMIC_CONCURRENCY,
         judge_endpoint=DEFAULT_ENDPOINT,
         judge_model=DEFAULT_MODEL,
@@ -80,6 +85,7 @@ async def test_license_scan_mode_uses_project_env_models_for_aibom(tmp_path):
         target_endpoint=DEFAULT_ENDPOINT,
         target_model=DEFAULT_MODEL,
         target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        judge_timeout_seconds=JUDGE_TIMEOUT_SECONDS,
         dynamic_concurrency=DYNAMIC_CONCURRENCY,
         judge_endpoint=DEFAULT_ENDPOINT,
         judge_model=DEFAULT_MODEL,
@@ -119,6 +125,7 @@ async def test_license_scan_mode_regenerates_default_boms(tmp_path):
         target_endpoint=DEFAULT_ENDPOINT,
         target_model=DEFAULT_MODEL,
         target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        judge_timeout_seconds=JUDGE_TIMEOUT_SECONDS,
         dynamic_concurrency=DYNAMIC_CONCURRENCY,
         judge_endpoint=DEFAULT_ENDPOINT,
         judge_model=DEFAULT_MODEL,
@@ -155,6 +162,7 @@ async def test_license_scan_mode_does_not_overwrite_explicit_boms(tmp_path):
         target_endpoint=DEFAULT_ENDPOINT,
         target_model=DEFAULT_MODEL,
         target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        judge_timeout_seconds=JUDGE_TIMEOUT_SECONDS,
         dynamic_concurrency=DYNAMIC_CONCURRENCY,
         judge_endpoint=DEFAULT_ENDPOINT,
         judge_model=DEFAULT_MODEL,
@@ -193,6 +201,7 @@ async def test_license_scan_mode_expands_project_root_for_default_boms(tmp_path,
         target_endpoint=DEFAULT_ENDPOINT,
         target_model=DEFAULT_MODEL,
         target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        judge_timeout_seconds=JUDGE_TIMEOUT_SECONDS,
         dynamic_concurrency=DYNAMIC_CONCURRENCY,
         judge_endpoint=DEFAULT_ENDPOINT,
         judge_model=DEFAULT_MODEL,

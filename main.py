@@ -31,6 +31,7 @@ from core.models import (
 from engines.bom import write_aibom, write_sbom
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
+    JUDGE_TIMEOUT_SECONDS,
     TARGET_TIMEOUT_SECONDS,
     load_payloads,
     run_dynamic_scan,
@@ -828,6 +829,7 @@ async def run_scan(
     target_endpoint: str,
     target_model: str,
     target_timeout_seconds: float,
+    judge_timeout_seconds: float,
     dynamic_concurrency: int,
     judge_endpoint: str,
     judge_model: str,
@@ -924,6 +926,7 @@ async def run_scan(
                 fallback_judge_endpoint=fallback_judge_endpoint,
                 fallback_judge_model=fallback_judge_model,
                 target_timeout_seconds=target_timeout_seconds,
+                judge_timeout_seconds=judge_timeout_seconds,
                 dynamic_concurrency=dynamic_concurrency,
                 include_evidence=include_evidence,
                 calibrate_judge_model=calibrate_judge_model,
@@ -1100,6 +1103,12 @@ def scan(
         min=1.0,
         help="Target request timeout in seconds. Covers the full non-streaming response.",
     ),
+    judge_timeout: float = typer.Option(
+        float(JUDGE_TIMEOUT_SECONDS),
+        "--judge-timeout",
+        min=1.0,
+        help="Judge request timeout in seconds. Covers calibration and payload verdicts.",
+    ),
     dynamic_concurrency: int = typer.Option(
         DYNAMIC_CONCURRENCY,
         "--dynamic-concurrency",
@@ -1224,6 +1233,7 @@ def scan(
             target_endpoint=target_endpoint,
             target_model=target_model,
             target_timeout_seconds=target_timeout,
+            judge_timeout_seconds=judge_timeout,
             dynamic_concurrency=dynamic_concurrency,
             judge_endpoint=judge_endpoint,
             judge_model=judge_model,
