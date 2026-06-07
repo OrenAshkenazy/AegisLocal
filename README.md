@@ -75,29 +75,13 @@ uv run python main.py --help
 
 ## Running a Scan
 
-Recommended commands:
-
-```bash
-uv run python main.py scan static
-uv run python main.py scan dynamic --target-model llama3.1:8b
-uv run python main.py scan licenses
-uv run python main.py scan all
-```
-
-The legacy command still works:
-
-```bash
-uv run python main.py scan
-```
-
-It runs the original combined static and dynamic scan.
 
 Example with explicit models:
 
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model llama3.1:8b
+  --judge-model qwen3.5:latest
 ```
 
 Example with a fallback judge model:
@@ -105,8 +89,8 @@ Example with a fallback judge model:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model llama3.1:8b \
-  --fallback-judge-model llama3.2:1b
+  --judge-model qwen3.5:latest \
+  --fallback-judge-model Qwen3:32B
 ```
 
 Example with slower local hardware:
