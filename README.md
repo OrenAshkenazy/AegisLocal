@@ -5,9 +5,8 @@
 <h1 align="center">AegisLocal</h1>
 AegisLocal is a local-first security scanner for AI applications and local LLM
 deployments. It audits both dependency risk and model behavior from a single CLI
-command, then emits a structured JSON report that works well for local
-development and CI. It can also write a compact Markdown report for human
-review.
+command, then prints a human-readable report by default. It can also emit
+compact JSON for CI and write Markdown for saved human review.
 
 The scanner is intentionally lightweight: it uses HTTP APIs for model access and
 does not import heavyweight ML frameworks such as `torch`, `transformers`, or
@@ -33,7 +32,9 @@ does not import heavyweight ML frameworks such as `torch`, `transformers`, or
   reliability.
 - **Executive production decisions** with `PASS`, `WARN`, `BLOCK_STAGING`,
   `BLOCK_PRODUCTION`, and `SCAN_INVALID` gates.
-- **CI-friendly exit codes** and machine-readable JSON output.
+- **Human-first reports** with exact fixes, source files, and CODEOWNERS-derived
+  finding owners.
+- **CI-friendly exit codes** and compact machine-readable JSON output.
 
 ## Requirements
 
@@ -187,34 +188,107 @@ ollama pull llama3.2:1b
 
 AegisLocal prints a human-readable report by default. Use `--json` or
 `--format json` for a compact machine-readable report, and `--output-file` to
-write that JSON to disk. The report separates confirmed security outcomes from
-scan reliability:
+write that JSON to disk.
 
-- `security_result`: `PASS`, `FAIL`, or `UNKNOWN`
-- `production_decision`: `PASS`, `WARN`, `BLOCK_STAGING`, `BLOCK_PRODUCTION`,
-  or `SCAN_INVALID`
-- `executive_summary`: top-level decision, reason, top risks, and next actions
-- `execution_status`: `COMPLETE` or `SCAN_INCOMPLETE`
-- `findings`: separate application supply-chain, model behavioral, model
-  license, and scan reliability risks
-- `owner_remediation`: actions grouped by owning team
-- `passed_audit`: `true` only when the scan completed without failing findings
+The default report is optimized for the first question a reader asks: what
+failed, who owns it, and how do I fix it?
 
-Execution errors are printed to stderr while the scan runs and are also included
-in the JSON report under `execution_errors`.
+Example static scan output:
+
+```text
+╭───────────────────────────── AegisLocal Report ──────────────────────────────╮
+│ BLOCK_STAGING · FAIL · static scan · 1.1s                                    │
+│                                                                              │
+│ Why                                                                          │
+│ 2 confirmed medium dependency vulnerabilities must be fixed before staging.  │
+│                                                                              │
+│ Required fixes                                                               │
+│ 1. aiohttp 3.13.5 -> upgrade to 3.14.0 or later                              │
+│    CVEs: CVE-2026-47265, CVE-2026-34993                                      │
+│    Source: pyproject.toml                                                    │
+│    Owner (from CODEOWNERS): @platform-team                                   │
+│                                                                              │
+│ 2. idna 3.13 -> upgrade to 3.15 or later                                     │
+│    CVE: CVE-2026-45409                                                       │
+│    Source: pyproject.toml                                                    │
+│    Owner (from CODEOWNERS): Unassigned (no CODEOWNERS match)                 │
+│                                                                              │
+│ Finding counts                                                               │
+│ Application supply chain: 2 medium                                           │
+│                                                                              │
+│ Next step                                                                    │
+│ Fix the dependency versions above, then rerun AegisLocal.                    │
+╰──────────────────────────────────────────────────────────────────────────────╯
+```
+
+Finding counts only shows categories that have findings. For example, if there
+are no scan reliability issues, the report does not print `Scan reliability: 0`.
 
 Finding owners are resolved from `.github/CODEOWNERS`, `CODEOWNERS`, or
 `docs/CODEOWNERS` when a finding has a source file. If no CODEOWNERS entry
 matches, the owner is reported as `Unassigned`.
+
+The report separates confirmed security outcomes from scan reliability:
+
+- Result: `PASS`, `FAIL`, or `UNKNOWN`
+- Decision: `PASS`, `WARN`, `BLOCK_STAGING`, `BLOCK_PRODUCTION`, or
+  `SCAN_INVALID`
+- Findings: application supply-chain, model behavior, model license, and scan
+  reliability risks
+- Scan reliability: only shown when execution errors or evaluator failures make
+  the scan incomplete or less reliable
+
+Execution errors are printed to stderr while the scan runs and are also included
+in the JSON report under `execution_errors` when present.
+
+Compact JSON uses the same finding model without null placeholders:
+
+```json
+{
+  "scan_type": "static",
+  "result": "FAIL",
+  "decision": "BLOCK_STAGING",
+  "duration_seconds": 1.15,
+  "summary": {
+    "total_findings": 2,
+    "reason": "2 confirmed medium dependency vulnerabilities must be fixed before staging",
+    "highest_severity": "MEDIUM"
+  },
+  "findings": [
+    {
+      "severity": "MEDIUM",
+      "category": "Dependency Vulnerability",
+      "owner": "@platform-team",
+      "action": "Upgrade aiohttp to 3.14.0 or later",
+      "package": "aiohttp",
+      "current_version": "3.13.5",
+      "fixed_version": "3.14.0",
+      "cves": ["CVE-2026-47265", "CVE-2026-34993"]
+    },
+    {
+      "severity": "MEDIUM",
+      "category": "Dependency Vulnerability",
+      "owner": "Unassigned",
+      "action": "Upgrade idna to 3.15 or later",
+      "package": "idna",
+      "current_version": "3.13",
+      "fixed_version": "3.15",
+      "cves": ["CVE-2026-45409"]
+    }
+  ],
+  "passed_audit": false,
+  "scanner_version": "0.1.0"
+}
+```
 
 Dynamic findings are grouped by category and include counts plus payload IDs.
 Each failed or unknown dynamic payload also gets a compact confidence assessment
 with `payload_id`, `verdict`, `confidence`, `judge_agreement`, and
 `evidence_available`. Raw model responses are not included by default.
 
-Static findings include an `action` field. Dependency vulnerabilities use
-`FAIL`; License Policy Review findings use `WARN`, so warning-only license
-results do not fail the audit by default.
+JSON findings include an `action` field with the exact remediation, such as
+`Upgrade idna to 3.15 or later`. License Policy Review warnings are still shown
+as findings, but warning-only license results do not fail the audit by default.
 
 For debugging, use `--include-evidence` to include sanitized, truncated prompt
 and target response excerpts for failed or unknown dynamic payloads:
@@ -233,7 +307,7 @@ truncates long text, and redacts common secret-like values and email addresses.
 Evidence is still potentially sensitive, so keep it off for routine CI unless
 you need debugging context.
 
-For a human-readable summary, write Markdown alongside JSON:
+For a saved human-readable summary, write Markdown alongside JSON:
 
 ```bash
 uv run python main.py scan all \
@@ -245,9 +319,19 @@ Example incomplete report fields:
 
 ```json
 {
-  "security_result": "UNKNOWN",
-  "execution_status": "SCAN_INCOMPLETE",
-  "status_message": "**SCAN INCOMPLETE**",
+  "result": "UNKNOWN",
+  "decision": "SCAN_INVALID",
+  "summary": {
+    "total_findings": 1,
+    "reason": "Scan incomplete: one payload could not be evaluated reliably"
+  },
+  "execution_errors": [
+    {
+      "source": "judge",
+      "message": "Primary judge returned an invalid verdict",
+      "payload_id": "pi-003"
+    }
+  ],
   "passed_audit": false
 }
 ```

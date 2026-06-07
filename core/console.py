@@ -199,7 +199,10 @@ def _risk_details(risk: ReportRisk) -> list[str]:
         details.append(f"{label}: {', '.join(risk.vulnerability_ids)}")
     if risk.source_file:
         details.append(f"Source: {risk.source_file}")
-    details.append(f"Owner: {risk.owner}")
+    owner_detail = f"Owner (from CODEOWNERS): {risk.owner}"
+    if risk.owner == "Unassigned":
+        owner_detail += " (no CODEOWNERS match)"
+    details.append(owner_detail)
     return details
 
 
