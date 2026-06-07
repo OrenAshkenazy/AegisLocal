@@ -225,6 +225,7 @@ async def post_chat_completion(
     *,
     deterministic: bool = False,
     response_schema: Optional[dict] = None,
+    timeout: Optional[aiohttp.ClientTimeout] = None,
 ) -> str:
     request_payload = build_chat_payload(
         model,
@@ -233,7 +234,7 @@ async def post_chat_completion(
         response_schema=response_schema,
         endpoint=endpoint,
     )
-    async with session.post(endpoint, json=request_payload) as response:
+    async with session.post(endpoint, json=request_payload, timeout=timeout) as response:
         content_type = response.headers.get("content-type", "")
         if "text/event-stream" in content_type:
             raise RuntimeError("streaming responses are not supported in v1")
@@ -374,13 +375,13 @@ async def attack_target(
     payload: Payload,
     endpoint: str,
     model: str,
+    session: aiohttp.ClientSession,
     timeout_seconds: float = TARGET_TIMEOUT_SECONDS,
 ) -> Tuple[Optional[str], Optional[ExecutionError]]:
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
     messages = [{"role": "user", "content": payload.text}]
     try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            return await post_chat_completion(session, endpoint, model, messages), None
+        return await post_chat_completion(session, endpoint, model, messages, timeout=timeout), None
     except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
         error = ExecutionError(
             source=ErrorSource.DYNAMIC,
@@ -397,6 +398,7 @@ async def evaluate_response(
     target_response: str,
     primary_judge: JudgeConfig,
     fallback_judge: Optional[JudgeConfig],
+    session: aiohttp.ClientSession,
     judge_timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeDecision:
     judges = [("primary", primary_judge)]
@@ -410,6 +412,7 @@ async def evaluate_response(
                 j,
                 payload,
                 target_response,
+                session,
                 judge_timeout_seconds,
             )
             for name, j in judges
@@ -494,6 +497,7 @@ async def _attempt_judge(
     judge: JudgeConfig,
     payload: Payload,
     target_response: str,
+    session: aiohttp.ClientSession,
     timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeAttempt:
     try:
@@ -501,6 +505,7 @@ async def _attempt_judge(
             payload,
             target_response,
             judge,
+            session,
             timeout_seconds=timeout_seconds,
         )
         if decision.verdict is not None:
@@ -533,6 +538,7 @@ async def _call_judge(
     payload: Payload,
     target_response: str,
     judge: JudgeConfig,
+    session: aiohttp.ClientSession,
     timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> JudgeDecision:
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -547,21 +553,23 @@ async def _call_judge(
         {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
         {"role": "user", "content": user_content},
     ]
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        raw_verdict = await post_chat_completion(
-            session,
-            judge.endpoint,
-            judge.model,
-            messages,
-            deterministic=True,
-            response_schema=JUDGE_RESPONSE_SCHEMA,
-        )
+    raw_verdict = await post_chat_completion(
+        session,
+        judge.endpoint,
+        judge.model,
+        messages,
+        deterministic=True,
+        response_schema=JUDGE_RESPONSE_SCHEMA,
+        timeout=timeout,
+    )
     verdict, reason = parse_strict_judge_decision(raw_verdict)
     return JudgeDecision(verdict=verdict, reason=reason)
 
 
 async def calibrate_judge(
     judge: JudgeConfig,
+    session: aiohttp.ClientSession,
+    semaphore: asyncio.Semaphore,
     timeout_seconds: float = JUDGE_TIMEOUT_SECONDS,
 ) -> List[ExecutionError]:
     async def calibrate_case(
@@ -569,22 +577,24 @@ async def calibrate_judge(
         target_response: str,
         expected_verdict: str,
     ) -> Optional[ExecutionError]:
-        try:
-            decision = await _call_judge(
-                payload,
-                target_response,
-                judge,
-                timeout_seconds=timeout_seconds,
-            )
-        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
-            error = ExecutionError(
-                source=ErrorSource.DYNAMIC,
-                message="Judge calibration request failed",
-                payload_id=payload.id,
-                detail=str(exc),
-            )
-            _warn(error)
-            return error
+        async with semaphore:
+            try:
+                decision = await _call_judge(
+                    payload,
+                    target_response,
+                    judge,
+                    session,
+                    timeout_seconds=timeout_seconds,
+                )
+            except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, ValueError) as exc:
+                error = ExecutionError(
+                    source=ErrorSource.DYNAMIC,
+                    message="Judge calibration request failed",
+                    payload_id=payload.id,
+                    detail=str(exc),
+                )
+                _warn(error)
+                return error
         if decision.verdict != expected_verdict:
             error = ExecutionError(
                 source=ErrorSource.DYNAMIC,
@@ -615,6 +625,7 @@ async def _evaluate_payload(
     primary_judge: JudgeConfig,
     fallback_judge: Optional[JudgeConfig],
     semaphore: asyncio.Semaphore,
+    session: aiohttp.ClientSession,
     target_timeout_seconds: float,
     judge_timeout_seconds: float,
 ) -> PayloadEvaluation:
@@ -623,6 +634,7 @@ async def _evaluate_payload(
             payload,
             target_endpoint,
             target_model,
+            session,
             target_timeout_seconds,
         )
         if target_error is not None or target_response is None:
@@ -633,6 +645,7 @@ async def _evaluate_payload(
             target_response,
             primary_judge,
             fallback_judge,
+            session,
             judge_timeout_seconds,
         )
         if decision.verdict is None:
@@ -791,38 +804,40 @@ async def run_dynamic_scan(
             endpoint=fallback_judge_endpoint or judge_endpoint,
             model=fallback_judge_model,
         )
-    if calibrate_judge_model:
-        judges_to_calibrate = [primary_judge]
-        if fallback_judge:
-            judges_to_calibrate.append(fallback_judge)
-        calibration_results = await asyncio.gather(*(
-            calibrate_judge(j, timeout_seconds=judge_timeout_seconds)
-            for j in judges_to_calibrate
-        ))
-        calibration_errors = [err for res in calibration_results for err in res]
-        if calibration_errors:
-            return [], [*errors, *calibration_errors], [], []
-
-    async def _evaluate_and_report(payload: Payload) -> PayloadEvaluation:
-        result = await _evaluate_payload(
-            payload,
-            target_endpoint,
-            target_model,
-            primary_judge,
-            fallback_judge,
-            semaphore,
-            target_timeout_seconds,
-            judge_timeout_seconds,
-        )
-        if on_progress:
-            verdict = result.verdict or "ERROR"
-            on_progress(f"payload {payload.id} -- {verdict}")
-        return result
-
     semaphore = asyncio.Semaphore(dynamic_concurrency)
-    evaluations = await asyncio.gather(
-        *(_evaluate_and_report(payload) for payload in payloads)
-    )
+    async with aiohttp.ClientSession() as session:
+        if calibrate_judge_model:
+            judges_to_calibrate = [primary_judge]
+            if fallback_judge:
+                judges_to_calibrate.append(fallback_judge)
+            calibration_results = await asyncio.gather(*(
+                calibrate_judge(j, session, semaphore, timeout_seconds=judge_timeout_seconds)
+                for j in judges_to_calibrate
+            ))
+            calibration_errors = [err for res in calibration_results for err in res]
+            if calibration_errors:
+                return [], [*errors, *calibration_errors], [], []
+
+        async def _evaluate_and_report(payload: Payload) -> PayloadEvaluation:
+            result = await _evaluate_payload(
+                payload,
+                target_endpoint,
+                target_model,
+                primary_judge,
+                fallback_judge,
+                semaphore,
+                session,
+                target_timeout_seconds,
+                judge_timeout_seconds,
+            )
+            if on_progress:
+                verdict = result.verdict or "ERROR"
+                on_progress(f"payload {payload.id} -- {verdict}")
+            return result
+
+        evaluations = await asyncio.gather(
+            *(_evaluate_and_report(payload) for payload in payloads)
+        )
 
     for evaluation in evaluations:
         errors.extend(error for error in evaluation.errors if error is not None)

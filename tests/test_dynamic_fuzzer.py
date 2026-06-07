@@ -1,6 +1,7 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -209,7 +210,7 @@ async def test_fallback_judge_recovery_records_primary_error(monkeypatch):
         tags=[],
     )
 
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         if judge.model == "primary":
             raise RuntimeError("primary unavailable")
         return JudgeDecision(verdict="PASS", reason="The model refused.")
@@ -221,6 +222,7 @@ async def test_fallback_judge_recovery_records_primary_error(monkeypatch):
         target_response="safe response",
         primary_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="primary"),
         fallback_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="fallback"),
+        session=object(),
     )
 
     assert decision.verdict == "PASS"
@@ -243,7 +245,7 @@ async def test_invalid_primary_and_fallback_verdict_records_unknown(monkeypatch)
         tags=[],
     )
 
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         return JudgeDecision(verdict=None)
 
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
@@ -253,6 +255,7 @@ async def test_invalid_primary_and_fallback_verdict_records_unknown(monkeypatch)
         target_response="ambiguous response",
         primary_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="primary"),
         fallback_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="fallback"),
+        session=object(),
     )
 
     assert decision.verdict is None
@@ -272,7 +275,7 @@ async def test_unknown_judge_verdict_is_not_an_execution_error(monkeypatch):
         tags=[],
     )
 
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         return JudgeDecision(verdict="UNKNOWN", reason="Ambiguous response.")
 
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
@@ -282,6 +285,7 @@ async def test_unknown_judge_verdict_is_not_an_execution_error(monkeypatch):
         target_response="ambiguous response",
         primary_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="primary"),
         fallback_judge=None,
+        session=object(),
     )
 
     assert decision.verdict == "UNKNOWN"
@@ -301,7 +305,7 @@ async def test_malformed_judge_response_records_execution_error(monkeypatch):
         tags=[],
     )
 
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         raise ValueError("invalid json")
 
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
@@ -311,6 +315,7 @@ async def test_malformed_judge_response_records_execution_error(monkeypatch):
         target_response="ambiguous response",
         primary_judge=JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="primary"),
         fallback_judge=None,
+        session=object(),
     )
 
     assert decision.verdict is None
@@ -320,7 +325,7 @@ async def test_malformed_judge_response_records_execution_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_calibrate_judge_rejects_valid_but_wrong_verdict(monkeypatch):
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         if payload.id == "judge-calibration-refusal":
             return JudgeDecision(
                 verdict="PASS",
@@ -334,7 +339,9 @@ async def test_calibrate_judge_rejects_valid_but_wrong_verdict(monkeypatch):
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
 
     errors = await calibrate_judge(
-        JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="weak")
+        JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="weak"),
+        session=object(),
+        semaphore=asyncio.Semaphore(1),
     )
 
     assert len(errors) == 3
@@ -348,13 +355,15 @@ async def test_calibrate_judge_rejects_valid_but_wrong_verdict(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_calibrate_judge_records_malformed_response(monkeypatch):
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         raise ValueError("invalid json")
 
     monkeypatch.setattr(dynamic_fuzzer, "_call_judge", fake_call_judge)
 
     errors = await calibrate_judge(
-        JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="weak")
+        JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="weak"),
+        session=object(),
+        semaphore=asyncio.Semaphore(1),
     )
 
     assert len(errors) == 4
@@ -365,7 +374,7 @@ async def test_calibrate_judge_records_malformed_response(monkeypatch):
 async def test_calibrate_judge_uses_configured_judge_timeout(monkeypatch):
     seen_timeouts = []
 
-    async def fake_call_judge(payload, target_response, judge, timeout_seconds=30):
+    async def fake_call_judge(payload, target_response, judge, session, timeout_seconds=30):
         seen_timeouts.append(timeout_seconds)
         return JudgeDecision(verdict="PASS", reason="The model refused.")
 
@@ -373,6 +382,8 @@ async def test_calibrate_judge_uses_configured_judge_timeout(monkeypatch):
 
     await calibrate_judge(
         JudgeConfig(endpoint="http://localhost:11434/v1/chat/completions", model="judge"),
+        session=object(),
+        semaphore=asyncio.Semaphore(1),
         timeout_seconds=90,
     )
 
