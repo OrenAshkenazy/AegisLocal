@@ -4,6 +4,8 @@
 from collections import Counter
 from typing import Optional
 
+from rich.text import Text
+
 from core.models import ReportRisk, ScanReport, Severity
 
 SEVERITY_RANK = {
@@ -348,3 +350,120 @@ def _scan_reliability_lines(report: ScanReport) -> list[str]:
     if lines and lines[-1] == "":
         lines.pop()
     return lines
+
+
+# ---------------------------------------------------------------------------
+# Ported helpers from console.py (verbatim)
+# ---------------------------------------------------------------------------
+
+
+def _all_risks(report: ScanReport) -> list[ReportRisk]:
+    return [
+        *report.findings.application_supply_chain,
+        *report.findings.model_behavior,
+        *report.findings.model_license,
+        *report.findings.scan_reliability,
+    ]
+
+
+def _severity_label_text(severities: Counter) -> str:
+    populated = [severity for severity, count in severities.items() if count]
+    if len(populated) == 1:
+        return populated[0]
+    return _severity_count_text(severities)
+
+
+def _human_reason(report: ScanReport) -> str:
+    blocking = [
+        risk
+        for risk in _all_risks(report)
+        if risk.severity.value in {"MEDIUM", "HIGH", "CRITICAL"}
+    ]
+    if report.scan_type == "static" and blocking:
+        severities = Counter(risk.severity.value.lower() for risk in blocking)
+        severity_text = _severity_label_text(severities)
+        noun = "vulnerability" if len(blocking) == 1 else "vulnerabilities"
+        return (
+            f"{len(blocking)} confirmed {severity_text} dependency {noun} "
+            "must be fixed before staging."
+        )
+    return report.executive_summary.reason
+
+
+def _passed_payload_lines(report: ScanReport) -> list[str]:
+    lines: list[str] = []
+    for assessment in report.dynamic_assessments:
+        if assessment.verdict != "PASS":
+            continue
+        tag_text = (
+            f" · OWASP: {', '.join(_display_owasp_tags(assessment.owasp_tags))}"
+            if assessment.owasp_tags
+            else ""
+        )
+        lines.append(f"{assessment.payload_id} · {assessment.category}{tag_text}")
+    return lines
+
+
+def _next_step(report: ScanReport) -> str:
+    if report.findings.application_supply_chain:
+        return "Fix the dependency versions above, then rerun AegisLocal."
+    if report.findings.model_behavior:
+        return "Review the failed payloads above, update guardrails, then rerun AegisLocal."
+    if report.execution_errors:
+        return "Fix the scan reliability issues above, then rerun AegisLocal."
+    return "No blocking action is required."
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+_RESULT_STYLES = {
+    "PASS": "bold green",
+    "FAIL": "bold red",
+    "UNKNOWN": "bold yellow",
+}
+
+
+def _append_section(text: Text, header: str, body: list[str]) -> None:
+    text.append(f"\n\n{header}\n", style="bold")
+    text.append("\n".join(body) if body else "None")
+
+
+def render_console_text(report: ScanReport, verbose: bool) -> Text:
+    text = Text()
+    text.append(
+        f"{report.production_decision.value} · {report.security_result.value} · "
+        f"{report.scan_type} scan · {report.scan_duration_seconds:.1f}s",
+        style=_RESULT_STYLES.get(report.security_result.value, "bold"),
+    )
+
+    text.append("\n\nWhy\n", style="bold")
+    text.append(_human_reason(report))
+
+    scan_context = _scan_context_lines(report)
+    if scan_context:
+        _append_section(text, "Scan context", scan_context)
+
+    required_fixes = _required_fixes_lines(report)
+    if required_fixes:
+        _append_section(text, "Required fixes", required_fixes)
+
+    failed_payloads = _failed_payloads_lines(report)
+    if failed_payloads:
+        _append_section(text, "Failed payloads", failed_payloads)
+
+    _append_section(text, "Finding counts", _finding_count_lines(report))
+
+    scan_reliability = _scan_reliability_lines(report)
+    if scan_reliability:
+        _append_section(text, "Scan reliability", scan_reliability)
+
+    if verbose:
+        passed = _passed_payload_lines(report)
+        if passed:
+            _append_section(text, "Passed payloads", passed)
+
+    text.append("\n\nNext step\n", style="bold")
+    text.append(_next_step(report))
+    return text

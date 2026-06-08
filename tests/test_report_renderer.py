@@ -358,3 +358,27 @@ def test_scan_reliability_uses_specific_remediation_for_static_error():
     # "Re-run the scan and review the failing scanner dependency or service."
     # That remediation is stored in scan_reliability ReportRisk, so "specific-when-known" applies.
     assert "Re-run the scan and review the failing scanner dependency or service." in joined
+
+
+from core.report_renderer import render_console_text
+
+
+def test_render_console_text_section_order():
+    from core.models import ErrorSource, ExecutionError
+    report = _dynamic_report(
+        assessments=[_fail("Direct Prompt Injection", "pi-001", tags=["OWASP:LLM01"])],
+        errors=[ExecutionError(source=ErrorSource.DYNAMIC, message="Target request failed", payload_id="sys-005")],
+        total=2)
+    text = render_console_text(report, verbose=False).plain
+    order = ["Why", "Scan context", "Required fixes", "Failed payloads",
+             "Finding counts", "Scan reliability", "Next step"]
+    positions = [text.index(h) for h in order]
+    assert positions == sorted(positions), f"sections out of order:\n{text}"
+
+
+def test_render_console_text_failed_header_has_no_judge_metadata():
+    report = _dynamic_report(
+        assessments=[_fail("Direct Prompt Injection", "pi-001", tags=["OWASP:LLM01"])], total=1)
+    text = render_console_text(report, verbose=False).plain
+    assert "Failed payloads" in text
+    assert "pi-001 · Direct Prompt Injection · FAIL · HIGH · 1/1 · OWASP: LLM01" in text

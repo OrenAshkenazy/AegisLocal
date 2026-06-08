@@ -489,6 +489,16 @@ def test_human_dynamic_report_shows_payload_tags_and_mitigation(capsys):
                 owasp_tags=["OWASP:LLM01", "OWASP:LLM08"],
             )
         ],
+        dynamic_assessments=[
+            DynamicFindingAssessment(
+                payload_id="rag-001", category="RAG Context Manipulation", severity=Severity.HIGH,
+                verdict="FAIL", confidence="HIGH", judge_agreement="1/1",
+                owasp_tags=["OWASP:LLM01", "OWASP:LLM08"]),
+            DynamicFindingAssessment(
+                payload_id="rag-004", category="RAG Context Manipulation", severity=Severity.HIGH,
+                verdict="FAIL", confidence="HIGH", judge_agreement="1/1",
+                owasp_tags=["OWASP:LLM01", "OWASP:LLM08"]),
+        ],
         dynamic_evidence=[],
         execution_errors=[],
         scan_type="dynamic",
@@ -498,11 +508,9 @@ def test_human_dynamic_report_shows_payload_tags_and_mitigation(capsys):
     ScanConsole().print_summary(report)
     output = capsys.readouterr().err
 
-    assert "RAG Context Manipulation failed" in output
-    assert "Payload type: RAG Context Manipulation" in output
-    assert "Payloads: rag-001, rag-004" in output
+    assert "RAG Context Manipulation" in output
+    assert "Wrap retrieved text as untrusted quoted content." in output
     assert "OWASP: LLM01, LLM08" in output
-    assert "Mitigation: Treat retrieved content as untrusted data" in output
 
     rendered = render_json_report(report)
 
