@@ -253,7 +253,8 @@ def _aggregate_supply_chain(risks: list[ReportRisk]) -> list[dict]:
                 "package_version": risk.package_version,
                 "severity": risk.severity,
                 "fixed_versions": [],
-                "cves": [],
+                "fixed_cves": [],
+                "unfixed_cves": [],
                 "source_file": risk.source_file,
                 "owner": risk.owner,
                 "remediation": risk.remediation,
@@ -264,13 +265,15 @@ def _aggregate_supply_chain(risks: list[ReportRisk]) -> list[dict]:
             order.append(key)
         if SEVERITY_RANK[risk.severity] > SEVERITY_RANK[group["severity"]]:
             group["severity"] = risk.severity
+        # An advisory's CVEs are "fixed" only if that advisory ships a fixed version.
+        bucket = "fixed_cves" if risk.fixed_version else "unfixed_cves"
         if risk.fixed_version:
             group["fixed_versions"].append(risk.fixed_version)
         else:
             group["has_unfixed"] = True
         for cve in risk.vulnerability_ids or []:
-            if cve not in group["cves"]:
-                group["cves"].append(cve)
+            if cve not in group["fixed_cves"] and cve not in group["unfixed_cves"]:
+                group[bucket].append(cve)
 
     result = [groups[key] for key in order]
     result.sort(key=lambda g: (-SEVERITY_RANK[g["severity"]], (g["package_name"] or "")))
@@ -288,13 +291,22 @@ def _supply_chain_advice(
     return None
 
 
+def _cve_label(cves: list[str]) -> str:
+    return "CVE" if len(cves) == 1 else "CVEs"
+
+
 def _supply_chain_entry_lines(index: int, group: dict) -> list[str]:
     severity = group["severity"].value
     package = group["package_name"]
+    version = group["package_version"]
     fixed = _max_version(group["fixed_versions"]) if group["fixed_versions"] else None
+    fixed_cves = group["fixed_cves"]
+    unfixed_cves = group["unfixed_cves"]
 
-    if package and group["package_version"] and fixed:
-        title = f"{package} {group['package_version']} -> upgrade to {fixed} or later"
+    if package and version and fixed:
+        title = f"{package} {version} -> upgrade to {fixed} or later"
+    elif package and version:
+        title = f"{package} {version} — no upstream fix available"
     elif group["remediation"]:
         title = group["remediation"].rstrip(".")
     elif package:
@@ -303,9 +315,18 @@ def _supply_chain_entry_lines(index: int, group: dict) -> list[str]:
         title = group["description"]
 
     lines = [f"{index}. [{severity}] {title}"]
-    if group["cves"]:
-        label = "CVE" if len(group["cves"]) == 1 else "CVEs"
-        lines.append(f"   {label}: {', '.join(group['cves'])}")
+
+    # When an upgrade exists but some CVEs have no fix, split them so the upgrade
+    # title is not read as resolving everything.
+    if fixed and unfixed_cves:
+        if fixed_cves:
+            lines.append(f"   Fixed by upgrade: {', '.join(fixed_cves)}")
+        lines.append(f"   No fix available: {', '.join(unfixed_cves)}")
+    else:
+        all_cves = fixed_cves + unfixed_cves
+        if all_cves:
+            lines.append(f"   {_cve_label(all_cves)}: {', '.join(all_cves)}")
+
     advice = _supply_chain_advice(package, group["has_unfixed"])
     if advice:
         lines.append(f"   Action: {advice}")

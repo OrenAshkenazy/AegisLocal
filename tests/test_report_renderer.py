@@ -264,6 +264,37 @@ def test_supply_chain_ecdsa_curated_advice():
     assert "CVE-2024-23342" in joined
 
 
+def test_supply_chain_splits_fixed_and_unfixed_cves():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.HIGH, category="Dependency Vulnerability",
+                description="fixable", package_name="ecdsa", package_version="0.19.1",
+                fixed_version="0.19.2", vulnerability_id="CVE-FIXABLE"),
+        Finding(severity=Severity.MEDIUM, category="Dependency Vulnerability",
+                description="nofix", package_name="ecdsa", package_version="0.19.1",
+                fixed_version=None, vulnerability_id="CVE-NOFIX-X"),
+    ])
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "ecdsa 0.19.1 -> upgrade to 0.19.2 or later" in joined
+    assert "Fixed by upgrade: CVE-FIXABLE" in joined
+    assert "No fix available: CVE-NOFIX-X" in joined
+    # The upgrade title must NOT lump the unfixed CVE into a single resolved list.
+    assert "CVEs: CVE-FIXABLE, CVE-NOFIX-X" not in joined
+
+
+def test_supply_chain_only_unfixed_titles_as_no_fix():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.HIGH, category="Dependency Vulnerability",
+                description="abandoned", package_name="deadlib", package_version="2.0.0",
+                fixed_version=None, vulnerability_id="CVE-DEAD"),
+    ])
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "deadlib 2.0.0 — no upstream fix available" in joined
+    assert "CVE: CVE-DEAD" in joined
+    assert "No upstream fix available" in joined  # Action line
+
+
 def test_finding_counts_always_show_count_for_single():
     from core.models import Finding, Severity
     report = _static_report([
