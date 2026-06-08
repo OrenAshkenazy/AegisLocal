@@ -347,7 +347,7 @@ def test_scan_reliability_coverage_from_matching_assessment():
     assert "Coverage: System Prompt Extraction" in joined
 
 
-def test_scan_reliability_generic_action_when_no_specific_remediation():
+def test_scan_reliability_uses_specific_remediation_for_static_error():
     from core.models import ErrorSource, ExecutionError
     report = _dynamic_report(
         assessments=[_fail("Tool Abuse", "tool-1")],
