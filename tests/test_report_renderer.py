@@ -382,3 +382,40 @@ def test_render_console_text_failed_header_has_no_judge_metadata():
     text = render_console_text(report, verbose=False).plain
     assert "Failed payloads" in text
     assert "pi-001 · Direct Prompt Injection · FAIL · HIGH · 1/1 · OWASP: LLM01" in text
+
+
+def test_golden_full_dynamic_failure_report():
+    from core.models import ErrorSource, ExecutionError, Severity
+    report = _dynamic_report(
+        assessments=[
+            _fail("Direct Prompt Injection", "pi-001", severity=Severity.CRITICAL, tags=["OWASP:LLM01"]),
+            _fail("System Prompt Extraction", "sys-002", tags=["OWASP:LLM07"]),
+        ],
+        errors=[ExecutionError(source=ErrorSource.DYNAMIC, message="Target request failed", payload_id="sys-005")],
+        total=42)
+    text = render_console_text(report, verbose=False).plain
+    # Required fixes cover every failed HIGH/CRITICAL category
+    assert "Direct Prompt Injection" in text
+    assert "System Prompt Extraction" in text
+    # Counts split and unambiguous
+    assert "Failed payloads:" in text
+    # Scan context present with correct counts (42 total, 1 error → 41 evaluated)
+    assert "Payloads: 42 total, 41 evaluated, 1 error" in text
+    # Scan reliability present
+    assert "Scan reliability" in text
+    # Evidence safe-default
+    assert "Evidence: unavailable" in text
+    # failures/attempts ratio present
+    assert "1/1" in text
+    # Section order is correct
+    order = ["Why", "Scan context", "Required fixes", "Failed payloads",
+             "Finding counts", "Scan reliability", "Next step"]
+    positions = [text.index(h) for h in order]
+    assert positions == sorted(positions)
+
+
+def test_finding_counts_none_when_clean_pass():
+    # A fully-passing scan with no findings and no errors → "None"
+    from core.report_renderer import _finding_count_lines
+    report = _dynamic_report(assessments=[], errors=[], total=5)
+    assert _finding_count_lines(report) == ["None"]
