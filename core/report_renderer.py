@@ -503,24 +503,17 @@ def _scan_reliability_lines(report: ScanReport) -> list[str]:
 
     category_by_payload = {a.payload_id: a.category for a in report.dynamic_assessments}
 
-    reliability = report.findings.scan_reliability
+    category_by_payload = {a.payload_id: a.category for a in report.dynamic_assessments}
     lines: list[str] = []
-    for index, error in enumerate(report.execution_errors, start=1):
-        # execution_errors and scan_reliability are built 1:1 in the same order,
-        # but index defensively so a length mismatch never drops an error.
-        risk = reliability[index - 1] if index - 1 < len(reliability) else None
+    for index, (error, risk) in enumerate(zip(report.execution_errors, report.findings.scan_reliability), start=1):
         subject = error.payload_id or "(no payload)"
         lines.append(f"{index}. {subject} · {error.message}")
-        impact = (
-            "payload was not evaluated"
-            if error.payload_id
-            else "scan coverage was reduced"
-        )
+        impact = "payload was not evaluated" if error.payload_id else "scan coverage was reduced"
         lines.append(f"   Impact:   {impact}")
         coverage = category_by_payload.get(error.payload_id) if error.payload_id else None
         if coverage:
             lines.append(f"   Coverage: {coverage}")
-        action = (risk.remediation if risk else None) or GENERIC_RELIABILITY_ACTION
+        action = risk.remediation or GENERIC_RELIABILITY_ACTION
         lines.append(f"   Action:   {action}")
         lines.append("")
     if lines and lines[-1] == "":
