@@ -118,6 +118,11 @@ class ScanConsole:
                 lines.append("\n")
         if report.execution_errors:
             lines.append(f"\nExecution errors: {len(report.execution_errors)}")
+
+        passed_payload_lines = _passed_payload_lines(report) if self._verbose else []
+        if passed_payload_lines:
+            lines.append("\n\nPassed payloads\n", style="bold")
+            lines.append("\n".join(passed_payload_lines))
         lines.append("\n\nNext step\n", style="bold")
         lines.append(_next_step(report))
 
@@ -187,6 +192,8 @@ def _risk_title(risk: ReportRisk) -> str:
             f"{risk.package_name} {risk.package_version} -> "
             f"upgrade to {risk.fixed_version} or later"
         )
+    if risk.payload_ids and risk.category != "Scan Reliability":
+        return f"{risk.category} failed"
     if risk.remediation:
         return risk.remediation.rstrip(".")
     return risk.description
@@ -194,16 +201,41 @@ def _risk_title(risk: ReportRisk) -> str:
 
 def _risk_details(risk: ReportRisk) -> list[str]:
     details: list[str] = []
+    if risk.payload_ids and risk.category != "Scan Reliability":
+        details.append(f"Payload type: {risk.category}")
+        details.append(f"Payloads: {', '.join(risk.payload_ids)}")
+    if risk.owasp_tags:
+        details.append(f"OWASP: {', '.join(_display_owasp_tags(risk.owasp_tags))}")
     if risk.vulnerability_ids:
         label = "CVE" if len(risk.vulnerability_ids) == 1 else "CVEs"
         details.append(f"{label}: {', '.join(risk.vulnerability_ids)}")
     if risk.source_file:
         details.append(f"Source: {risk.source_file}")
-    owner_detail = f"Owner (from CODEOWNERS): {risk.owner}"
-    if risk.owner == "Unassigned":
-        owner_detail += " (no CODEOWNERS match)"
-    details.append(owner_detail)
+        owner_detail = f"Owner (from CODEOWNERS): {risk.owner}"
+        if risk.owner == "Unassigned":
+            owner_detail += " (no CODEOWNERS match)"
+        details.append(owner_detail)
+    if risk.payload_ids and risk.category != "Scan Reliability" and risk.remediation:
+        details.append(f"Mitigation: {risk.remediation.rstrip('.')}")
     return details
+
+
+def _display_owasp_tags(tags: list[str]) -> list[str]:
+    return [tag.removeprefix("OWASP:") for tag in tags]
+
+
+def _passed_payload_lines(report: ScanReport) -> list[str]:
+    lines: list[str] = []
+    for assessment in report.dynamic_assessments:
+        if assessment.verdict != "PASS":
+            continue
+        tag_text = (
+            f" · OWASP: {', '.join(_display_owasp_tags(assessment.owasp_tags))}"
+            if assessment.owasp_tags
+            else ""
+        )
+        lines.append(f"{assessment.payload_id} · {assessment.category}{tag_text}")
+    return lines
 
 
 def _count_summary(risks: list[ReportRisk]) -> str:

@@ -265,6 +265,40 @@ def test_human_report_shows_source_and_hides_zero_counts(capsys):
     assert "Model behavior: 0" not in output
 
 
+def test_human_dynamic_report_does_not_apply_codeowners_to_runtime_findings(capsys):
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[],
+        dynamic_evidence=[],
+        execution_errors=[
+            ExecutionError(
+                source=ErrorSource.DYNAMIC,
+                message="Judge calibration failed",
+                payload_id="judge-calibration-refusal",
+                detail="model=qwen3.5:latest expected=PASS actual=UNKNOWN",
+            )
+        ],
+        scan_type="dynamic",
+        include_static_section=False,
+    )
+
+    ScanConsole().print_summary(report)
+    output = capsys.readouterr().err
+
+    assert "Configure a fallback judge and re-run the dynamic scan" in output
+    assert "Owner (from CODEOWNERS)" not in output
+    assert "Owner:" not in output
+
+
 def test_report_does_not_fail_for_warning_only_findings():
     report = build_report(
         target_endpoint=DEFAULT_ENDPOINT,
@@ -321,6 +355,7 @@ def test_report_separates_risk_areas_and_owner_remediation():
                 severity=Severity.HIGH,
                 failed_count=1,
                 payload_ids=["pii-003"],
+                owasp_tags=["OWASP:LLM06", "OWASP:LLM07"],
             )
         ],
         dynamic_assessments=[
@@ -372,6 +407,11 @@ def test_report_separates_risk_areas_and_owner_remediation():
     assert report.executive_summary.next_actions[0] == "Re-run with fallback judge."
     assert len(report.findings.application_supply_chain) == 1
     assert len(report.findings.model_behavior) == 1
+    assert report.findings.model_behavior[0].owasp_tags == [
+        "OWASP:LLM06",
+        "OWASP:LLM07",
+    ]
+    assert "Prevent secret extraction" in report.findings.model_behavior[0].remediation
     assert len(report.findings.model_license) == 1
     assert len(report.findings.scan_reliability) == 2
     assert report.dynamic_assessments[0].judge_agreement == "2/2"
@@ -426,6 +466,89 @@ def test_markdown_report_is_compact_and_human_readable():
     assert "Scan status: Complete" in markdown
     assert "| tool-001 | FAIL | HIGH | 1/1 | no |" in markdown
     assert "## Remediation By Owner" in markdown
+
+
+def test_human_dynamic_report_shows_payload_tags_and_mitigation(capsys):
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[
+            GroupedFinding(
+                category="RAG Context Manipulation",
+                severity=Severity.HIGH,
+                failed_count=2,
+                payload_ids=["rag-001", "rag-004"],
+                owasp_tags=["OWASP:LLM01", "OWASP:LLM08"],
+            )
+        ],
+        dynamic_evidence=[],
+        execution_errors=[],
+        scan_type="dynamic",
+        include_static_section=False,
+    )
+
+    ScanConsole().print_summary(report)
+    output = capsys.readouterr().err
+
+    assert "RAG Context Manipulation failed" in output
+    assert "Payload type: RAG Context Manipulation" in output
+    assert "Payloads: rag-001, rag-004" in output
+    assert "OWASP: LLM01, LLM08" in output
+    assert "Mitigation: Treat retrieved content as untrusted data" in output
+
+    rendered = render_json_report(report)
+
+    assert '"owasp_tags": [' in rendered
+    assert '"OWASP:LLM08"' in rendered
+
+
+def test_verbose_human_report_shows_passed_payload_tags(capsys):
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT,
+        target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS,
+        dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT,
+        judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None,
+        fallback_judge_model=None,
+        include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[],
+        dynamic_assessments=[
+            DynamicFindingAssessment(
+                payload_id="pi-001",
+                category="Direct Prompt Injection",
+                severity=Severity.CRITICAL,
+                verdict="PASS",
+                confidence="HIGH",
+                judge_agreement="1/1",
+                owasp_tags=["OWASP:LLM01"],
+                evidence_available=False,
+            )
+        ],
+        dynamic_evidence=[],
+        execution_errors=[],
+        scan_type="dynamic",
+        include_static_section=False,
+    )
+
+    ScanConsole().print_summary(report)
+    default_output = capsys.readouterr().err
+    ScanConsole(verbose=True).print_summary(report)
+    verbose_output = capsys.readouterr().err
+
+    assert "Passed payloads" not in default_output
+    assert "Passed payloads" in verbose_output
+    assert "pi-001 · Direct Prompt Injection · OWASP: LLM01" in verbose_output
 
 
 def test_report_does_not_generate_none_package_remediation():

@@ -79,6 +79,7 @@ class GroupedFinding(BaseModel):
     severity: Severity
     failed_count: int = Field(..., ge=1)
     payload_ids: List[str] = Field(default_factory=list)
+    owasp_tags: List[str] = Field(default_factory=list)
 
 
 class DynamicEvidence(BaseModel):
@@ -102,6 +103,7 @@ class DynamicFindingAssessment(BaseModel):
     verdict: str
     confidence: str
     judge_agreement: str
+    owasp_tags: List[str] = Field(default_factory=list)
     evidence_available: bool = False
 
 
@@ -129,6 +131,7 @@ class ReportRisk(BaseModel):
     owner: str
     remediation: Optional[str] = None
     payload_ids: List[str] = Field(default_factory=list)
+    owasp_tags: List[str] = Field(default_factory=list)
     subject_name: Optional[str] = None
     package_name: Optional[str] = None
     package_version: Optional[str] = None
@@ -161,6 +164,7 @@ class ScanReport(BaseModel):
     target_endpoint: Optional[HttpUrl] = None
     target_model: Optional[str] = None
     target_timeout_seconds: Optional[float] = None
+    judge_timeout_seconds: Optional[float] = None
     dynamic_concurrency: Optional[int] = None
     judge_endpoint: Optional[HttpUrl] = None
     judge_model: Optional[str] = None

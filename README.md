@@ -87,7 +87,7 @@ Example with explicit models:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model qwen3.5:latest
+  --judge-model Qwen3:32B
 ```
 
 Example with a fallback judge model:
@@ -95,8 +95,8 @@ Example with a fallback judge model:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model qwen3.5:latest \
-  --fallback-judge-model Qwen3:32B
+  --judge-model Qwen3:32B \
+  --fallback-judge-model mistral:latest
 ```
 
 Example with slower local hardware:
@@ -104,6 +104,7 @@ Example with slower local hardware:
 ```bash
 uv run python main.py scan \
   --target-timeout 60 \
+  --judge-timeout 60 \
   --dynamic-concurrency 1
 ```
 
@@ -114,6 +115,7 @@ server is running:
 
 ```bash
 ollama pull llama3.1:8b
+ollama pull Qwen3:32B
 ollama serve
 ```
 
@@ -122,13 +124,13 @@ Then run:
 ```bash
 uv run python main.py scan \
   --target-model llama3.1:8b \
-  --judge-model llama3.1:8b
+  --judge-model Qwen3:32B
 ```
 
 If you configure a fallback judge, that model must also be available locally:
 
 ```bash
-ollama pull llama3.2:1b
+ollama pull mistral:latest
 ```
 
 ## CLI Options
@@ -140,6 +142,7 @@ ollama pull llama3.2:1b
 --target-endpoint TEXT           Target chat-completions endpoint.
 --target-model TEXT              Target model name.
 --target-timeout FLOAT           Target request timeout in seconds.
+--judge-timeout FLOAT            Judge request timeout in seconds.
 --dynamic-concurrency INTEGER    Concurrent dynamic payload evaluations.
 --judge-endpoint TEXT            Primary judge endpoint.
 --judge-model TEXT               Primary judge model.
@@ -164,6 +167,8 @@ ollama pull llama3.2:1b
                                   License Policy Review.
 --json                            Print compact JSON instead of human report.
 --format [human|json]             Select report output format.
+--verbose                         Show per-item status lines and include passed
+                                  dynamic payload assessments with OWASP tags.
 --output-file PATH                Write compact JSON report to file.
 --markdown-output-file PATH       Write compact Markdown report to file.
 ```
@@ -265,10 +270,16 @@ Compact JSON uses the same finding model without null placeholders:
 }
 ```
 
-Dynamic findings are grouped by category and include counts plus payload IDs.
-Each failed or unknown dynamic payload also gets a compact confidence assessment
-with `payload_id`, `verdict`, `confidence`, `judge_agreement`, and
-`evidence_available`. Raw model responses are not included by default.
+Dynamic findings are grouped by payload category and include failed payload IDs,
+OWASP tags, and high-level mitigation guidance. Each failed or unknown dynamic
+payload also gets a compact confidence assessment with `payload_id`, `verdict`,
+`confidence`, `judge_agreement`, and `evidence_available`. Raw model responses
+are not included by default.
+
+Use `--verbose` when you also need passed dynamic payloads in the human report
+and JSON assessments. Verbose passed entries include the payload ID, payload
+category, and OWASP tags, but still omit raw model responses unless
+`--include-evidence` is also set.
 
 JSON findings include an `action` field with the exact remediation, such as
 `Upgrade idna to 3.15 or later`. License Policy Review warnings are still shown
@@ -380,6 +391,11 @@ Before payload evaluation, AegisLocal runs a small judge calibration preflight.
 The judge must correctly classify known refusal and unsafe-compliance examples.
 If calibration fails, the dynamic scan stops as `UNKNOWN` instead of trusting a
 weak judge that may return false `PASS` verdicts.
+
+Target and judge requests have separate timeouts. Use `--target-timeout` for
+the model under test, and `--judge-timeout` for judge calibration and verdict
+requests. Slow local judge models may need a higher `--judge-timeout` even when
+the target model responds quickly.
 
 The scanner intentionally reports only failed counts and payload IDs by default.
 Use `--include-evidence` when you need sanitized prompt/response excerpts and a

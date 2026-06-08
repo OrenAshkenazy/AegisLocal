@@ -31,6 +31,7 @@ from core.models import (
 from engines.bom import write_aibom, write_sbom
 from engines.dynamic_fuzzer import (
     DYNAMIC_CONCURRENCY,
+    JUDGE_TIMEOUT_SECONDS,
     TARGET_TIMEOUT_SECONDS,
     load_payloads,
     run_dynamic_scan,
@@ -58,6 +59,60 @@ SEVERITY_RANK = {
     Severity.MEDIUM: 2,
     Severity.HIGH: 3,
     Severity.CRITICAL: 4,
+}
+MODEL_BEHAVIOR_REMEDIATION = {
+    "Direct Prompt Injection": (
+        "Harden instruction hierarchy, reject user-supplied system/developer "
+        "directives, and add prompt-injection regression tests."
+    ),
+    "Jailbreak / Safety Bypass": (
+        "Tighten refusal policy, add jailbreak-specific guardrails, and test "
+        "roleplay, encoding, and split-response bypasses."
+    ),
+    "System Prompt Extraction": (
+        "Prevent disclosure of system/developer prompts, hidden policies, and "
+        "runtime configuration in direct, summarized, or transformed form."
+    ),
+    "Insecure Code Generation": (
+        "Require secure coding defaults, reject unsafe implementation patterns, "
+        "and add policy checks for generated code."
+    ),
+    "Toxicity": (
+        "Tune safety policy and moderation guardrails for protected-class abuse "
+        "and hateful content."
+    ),
+    "Harmful Instruction Compliance": (
+        "Strengthen refusal behavior for harmful operational instructions and "
+        "add safety checks before detailed procedural output."
+    ),
+    "PII Extraction": (
+        "Block requests for private personal data and require privacy-preserving "
+        "responses when identity data is requested."
+    ),
+    "PII Leakage": (
+        "Prevent replay of prior-user data, secrets, and private conversation "
+        "context; add memory/context isolation checks."
+    ),
+    "Sensitive Data Exfiltration": (
+        "Prevent secret extraction from prompts, retrieved context, and tool "
+        "outputs; redact credentials and enforce least-context exposure."
+    ),
+    "Tool Abuse": (
+        "Gate side-effecting tools behind explicit authorization, confirmation, "
+        "and scoped allowlists."
+    ),
+    "RAG Context Manipulation": (
+        "Treat retrieved content as untrusted data, strip embedded instructions, "
+        "and enforce system instruction precedence."
+    ),
+    "Policy Evasion": (
+        "Test multilingual, encoded, roleplay, and formatting bypasses; keep "
+        "policy enforcement invariant across presentation changes."
+    ),
+    "Multi-Turn Setup Injection": (
+        "Do not persist user-supplied future-trigger instructions that override "
+        "system policy; validate memory writes and conversation state."
+    ),
 }
 
 app = typer.Typer(help="AegisLocal local AI security scanner.")
@@ -92,6 +147,7 @@ def build_report(
     dynamic_assessments=None,
     license_findings=None,
     license_coverage=None,
+    judge_timeout_seconds: Optional[float] = None,
     scan_type: str = "all",
     include_static_section: bool = True,
     include_dynamic_section: bool = True,
@@ -157,6 +213,9 @@ def build_report(
         target_model=target_model if include_dynamic_section else None,
         target_timeout_seconds=(
             target_timeout_seconds if include_dynamic_section else None
+        ),
+        judge_timeout_seconds=(
+            judge_timeout_seconds if include_dynamic_section else None
         ),
         dynamic_concurrency=dynamic_concurrency if include_dynamic_section else None,
         judge_endpoint=judge_endpoint if include_dynamic_section else None,
@@ -282,8 +341,9 @@ def _build_risk_areas(
                 f"{', '.join(finding.payload_ids)}"
             ),
             owner="AI platform team",
-            remediation="Review failed payloads and tune prompts, policies, or guardrails.",
+            remediation=_model_behavior_remediation(finding.category),
             payload_ids=finding.payload_ids,
+            owasp_tags=finding.owasp_tags,
         )
         for finding in dynamic_findings
     ]
@@ -432,6 +492,13 @@ def _execution_error_remediation(error: ExecutionError) -> str:
     if error.source == ErrorSource.CONFIG:
         return "Fix scan configuration and re-run before trusting omitted results."
     return "Re-run the scan and review the failing scanner dependency or service."
+
+
+def _model_behavior_remediation(category: str) -> str:
+    return MODEL_BEHAVIOR_REMEDIATION.get(
+        category,
+        "Review failed payloads and tune prompts, policies, or guardrails.",
+    )
 
 
 def _build_incomplete_reason(
@@ -757,6 +824,8 @@ def _compact_risk(risk: ReportRisk) -> dict:
         compact["cves"] = risk.vulnerability_ids
     if risk.payload_ids:
         compact["payload_ids"] = risk.payload_ids
+    if risk.owasp_tags:
+        compact["owasp_tags"] = risk.owasp_tags
     if risk.subject_name:
         compact["subject"] = risk.subject_name
     if not risk.package_name and not risk.payload_ids and not risk.subject_name:
@@ -828,12 +897,14 @@ async def run_scan(
     target_endpoint: str,
     target_model: str,
     target_timeout_seconds: float,
+    judge_timeout_seconds: float,
     dynamic_concurrency: int,
     judge_endpoint: str,
     judge_model: str,
     fallback_judge_endpoint: Optional[str],
     fallback_judge_model: Optional[str],
     include_evidence: bool,
+    include_passed_assessments: bool,
     calibrate_judge_model: bool,
     run_static: bool,
     run_dynamic: bool,
@@ -924,8 +995,10 @@ async def run_scan(
                 fallback_judge_endpoint=fallback_judge_endpoint,
                 fallback_judge_model=fallback_judge_model,
                 target_timeout_seconds=target_timeout_seconds,
+                judge_timeout_seconds=judge_timeout_seconds,
                 dynamic_concurrency=dynamic_concurrency,
                 include_evidence=include_evidence,
+                include_passed_assessments=include_passed_assessments,
                 calibrate_judge_model=calibrate_judge_model,
                 on_progress=dynamic_cb,
                 payloads=payloads,
@@ -939,6 +1012,7 @@ async def run_scan(
         target_endpoint=target_endpoint,
         target_model=target_model,
         target_timeout_seconds=target_timeout_seconds,
+        judge_timeout_seconds=judge_timeout_seconds,
         dynamic_concurrency=dynamic_concurrency,
         judge_endpoint=judge_endpoint,
         judge_model=judge_model,
@@ -1100,6 +1174,12 @@ def scan(
         min=1.0,
         help="Target request timeout in seconds. Covers the full non-streaming response.",
     ),
+    judge_timeout: float = typer.Option(
+        float(JUDGE_TIMEOUT_SECONDS),
+        "--judge-timeout",
+        min=1.0,
+        help="Judge request timeout in seconds. Covers calibration and payload verdicts.",
+    ),
     dynamic_concurrency: int = typer.Option(
         DYNAMIC_CONCURRENCY,
         "--dynamic-concurrency",
@@ -1187,7 +1267,10 @@ def scan(
         False,
         "--verbose",
         "-v",
-        help="Show per-item status lines during scan.",
+        help=(
+            "Show per-item status lines and include passed dynamic payload "
+            "assessments with OWASP tags."
+        ),
     ),
     output_file: Optional[Path] = typer.Option(
         None,
@@ -1224,12 +1307,14 @@ def scan(
             target_endpoint=target_endpoint,
             target_model=target_model,
             target_timeout_seconds=target_timeout,
+            judge_timeout_seconds=judge_timeout,
             dynamic_concurrency=dynamic_concurrency,
             judge_endpoint=judge_endpoint,
             judge_model=judge_model,
             fallback_judge_endpoint=fallback_judge_endpoint,
             fallback_judge_model=fallback_judge_model,
             include_evidence=include_evidence,
+            include_passed_assessments=verbose,
             calibrate_judge_model=calibrate_judge_model,
             run_static=run_static,
             run_dynamic=run_dynamic,
