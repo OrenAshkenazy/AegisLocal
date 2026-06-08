@@ -143,7 +143,8 @@ def _scan_context_lines(report: ScanReport) -> list[str]:
     lines = [
         f"Target:   {report.target_model or 'unknown'}",
         f"Type:     {report.scan_type}",
-        f"Payloads: {total} total, {evaluated} evaluated, {error_count} error",
+        f"Payloads: {total} total, {evaluated} evaluated, "
+        f"{error_count} error{'' if error_count == 1 else 's'}",
         "Attempts: 1 per payload",
         "Note:     single-attempt scan; rerun with more attempts for stochastic confidence",
     ]

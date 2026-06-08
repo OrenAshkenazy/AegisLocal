@@ -70,7 +70,7 @@ def test_scan_context_shows_target_type_and_counts():
     joined = "\n".join(_scan_context_lines(report))
     assert "Target:   llama3.1:8b" in joined
     assert "Type:     dynamic" in joined
-    assert "Payloads: 41 total, 41 evaluated, 0 error" in joined
+    assert "Payloads: 41 total, 41 evaluated, 0 errors" in joined
     assert "Attempts: 1 per payload" in joined
 
 
@@ -95,7 +95,20 @@ def test_scan_context_count_guard_when_total_zero():
     )
     report = _dynamic_report(assessments=[fail], total=0)
     joined = "\n".join(_scan_context_lines(report))
-    assert "Payloads: 1 total, 1 evaluated, 0 error" in joined
+    assert "Payloads: 1 total, 1 evaluated, 0 errors" in joined
+
+
+def test_scan_context_pluralizes_multiple_errors():
+    from core.models import ErrorSource, ExecutionError
+    report = _dynamic_report(
+        errors=[
+            ExecutionError(source=ErrorSource.DYNAMIC, message="boom", payload_id="a-1"),
+            ExecutionError(source=ErrorSource.DYNAMIC, message="boom", payload_id="a-2"),
+        ],
+        total=5,
+    )
+    joined = "\n".join(_scan_context_lines(report))
+    assert "Payloads: 5 total, 3 evaluated, 2 errors" in joined
 
 
 def test_scan_context_empty_for_static_scan():
