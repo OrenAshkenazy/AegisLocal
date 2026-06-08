@@ -1,12 +1,7 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
-from collections import Counter
-from typing import Optional
-
-from rich.text import Text
-
-from core.models import ReportRisk, ScanReport, Severity
+from core.models import ScanReport, Severity
 
 SEVERITY_RANK = {
     Severity.INFO: 0,
