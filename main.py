@@ -153,6 +153,7 @@ def build_report(
     include_dynamic_section: bool = True,
     include_license_section: bool = False,
     scan_duration_seconds: float = 0.0,
+    dynamic_total_payloads: int = 0,
     codeowners: Optional[Sequence[tuple[str, list[str]]]] = None,
     project_root: Optional[Path] = None,
 ) -> ScanReport:
@@ -238,6 +239,7 @@ def build_report(
         findings=risk_areas,
         dynamic_assessments=dynamic_assessments,
         dynamic_evidence=dynamic_evidence,
+        dynamic_total_payloads=dynamic_total_payloads,
         license_coverage=license_coverage if include_license_section else None,
         owner_remediation=owner_remediation,
         execution_errors=execution_errors,
@@ -978,8 +980,10 @@ async def run_scan(
     dynamic_errors = []
     dynamic_evidence = []
     dynamic_assessments = []
+    dynamic_total_payloads = 0
     if run_dynamic:
         payloads, payload_errors = load_payloads(payload_file)
+        dynamic_total_payloads = len(payloads)
         with console.dynamic_progress(len(payloads)) as dynamic_cb:
             (
                 dynamic_findings,
@@ -1031,6 +1035,7 @@ async def run_scan(
         include_dynamic_section=run_dynamic,
         include_license_section=license_scan,
         scan_duration_seconds=round(duration, 2),
+        dynamic_total_payloads=dynamic_total_payloads,
         codeowners=codeowners,
         project_root=project_root,
     )
