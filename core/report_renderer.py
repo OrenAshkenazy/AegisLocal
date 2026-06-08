@@ -109,6 +109,8 @@ GENERIC_MITIGATION = (
     "listed, and add category-specific mitigation before release."
 )
 
+GENERIC_RELIABILITY_ACTION = "rerun scan before accepting coverage for this category"
+
 
 def _is_dynamic(report: ScanReport) -> bool:
     return report.scan_type in {"dynamic", "all", "custom"} and (
@@ -317,3 +319,32 @@ def _finding_count_lines(report: ScanReport) -> list[str]:
     if report.execution_errors:
         lines.append(f"Execution errors: {len(report.execution_errors)}")
     return lines or ["None"]
+
+
+def _scan_reliability_lines(report: ScanReport) -> list[str]:
+    if not report.execution_errors:
+        return []
+
+    category_by_payload = {a.payload_id: a.category for a in report.dynamic_assessments}
+    remediation_by_payload = {
+        risk.payload_ids[0]: risk.remediation
+        for risk in report.findings.scan_reliability
+        if risk.payload_ids and risk.remediation
+    }
+
+    lines: list[str] = []
+    for index, error in enumerate(report.execution_errors, start=1):
+        subject = error.payload_id or "(no payload)"
+        lines.append(f"{index}. {subject} · {error.message}")
+        lines.append("   Impact:   payload was not evaluated")
+        coverage = category_by_payload.get(error.payload_id) if error.payload_id else None
+        if coverage:
+            lines.append(f"   Coverage: {coverage}")
+        action = (
+            remediation_by_payload.get(error.payload_id) if error.payload_id else None
+        ) or GENERIC_RELIABILITY_ACTION
+        lines.append(f"   Action:   {action}")
+        lines.append("")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines

@@ -314,3 +314,47 @@ def test_finding_counts_hides_zero_rows_and_shows_execution_errors():
     assert "Failed payloads:" in joined
     assert "Execution errors: 1" in joined
     assert "Application supply chain:" not in joined  # zero → hidden
+
+
+from core.report_renderer import _scan_reliability_lines
+
+
+def test_scan_reliability_absent_without_errors():
+    report = _dynamic_report(assessments=[_fail("Direct Prompt Injection", "pi-1")], total=1)
+    assert _scan_reliability_lines(report) == []
+
+
+def test_scan_reliability_uses_specific_remediation_when_known():
+    from core.models import ErrorSource, ExecutionError
+    report = _dynamic_report(
+        errors=[ExecutionError(source=ErrorSource.DYNAMIC, message="Judge calibration failed",
+                               payload_id="judge-calibration-refusal")],
+        total=1)
+    joined = "\n".join(_scan_reliability_lines(report))
+    assert "judge-calibration-refusal · Judge calibration failed" in joined
+    assert "Impact:   payload was not evaluated" in joined
+    assert "Configure a fallback judge and re-run the dynamic scan." in joined
+
+
+def test_scan_reliability_coverage_from_matching_assessment():
+    from core.models import ErrorSource, ExecutionError
+    report = _dynamic_report(
+        assessments=[_fail("System Prompt Extraction", "sys-005")],
+        errors=[ExecutionError(source=ErrorSource.DYNAMIC, message="Target request failed",
+                               payload_id="sys-005")],
+        total=2)
+    joined = "\n".join(_scan_reliability_lines(report))
+    assert "Coverage: System Prompt Extraction" in joined
+
+
+def test_scan_reliability_generic_action_when_no_specific_remediation():
+    from core.models import ErrorSource, ExecutionError
+    report = _dynamic_report(
+        assessments=[_fail("Tool Abuse", "tool-1")],
+        errors=[ExecutionError(source=ErrorSource.STATIC, message="OSV timeout", payload_id="tool-1")],
+        total=1)
+    joined = "\n".join(_scan_reliability_lines(report))
+    # STATIC source with non-judge message → upstream _execution_error_remediation returns
+    # "Re-run the scan and review the failing scanner dependency or service."
+    # That remediation is stored in scan_reliability ReportRisk, so "specific-when-known" applies.
+    assert "Re-run the scan and review the failing scanner dependency or service." in joined
