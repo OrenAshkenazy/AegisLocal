@@ -2,6 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from core.models import DynamicFindingAssessment, Severity
+from core.report_renderer import (
+    _failed_payloads_lines,
+    _finding_count_lines,
+    _required_fixes_lines,
+    _scan_context_lines,
+    _scan_reliability_lines,
+    render_console_text,
+)
 
 
 def test_assessment_accepts_expected_behavior_and_verdict_reason():
@@ -30,15 +38,6 @@ def test_assessment_defaults_new_fields_to_none():
     )
     assert assessment.expected_behavior is None
     assert assessment.verdict_reason is None
-
-
-from core.report_renderer import (
-    CAPABILITY_LINES,
-    CATEGORY_CONTEXT,
-    CATEGORY_MITIGATION,
-    EXFIL_DATA_CLASS,
-    _scan_context_lines,
-)
 
 
 def _dynamic_report(assessments=None, errors=None, total=0):
@@ -113,9 +112,6 @@ def test_scan_context_empty_for_static_scan():
     assert _scan_context_lines(report) == []
 
 
-from core.report_renderer import _required_fixes_lines
-
-
 def _fail(category, payload_id="x-1", severity=None, tags=None):
     from core.models import DynamicFindingAssessment, Severity
     return DynamicFindingAssessment(
@@ -179,9 +175,6 @@ def test_required_fixes_preserves_supply_chain_source_and_owner():
     assert "Source: pyproject.toml" in joined
     assert "Owner (from CODEOWNERS): Unassigned (no CODEOWNERS match)" in joined
     assert "CVE: CVE-2026-45409" in joined
-
-
-from core.report_renderer import _failed_payloads_lines
 
 
 def test_failed_payload_header_uses_severity_and_failure_ratio():
@@ -264,9 +257,6 @@ def test_failed_payloads_sorted_by_severity_then_category():
     assert text.index("pi-1") < text.index("tool-1")
 
 
-from core.report_renderer import _finding_count_lines
-
-
 def test_finding_counts_split_grouped_and_failed_payloads():
     from core.models import GroupedFinding, Severity
     from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
@@ -316,9 +306,6 @@ def test_finding_counts_hides_zero_rows_and_shows_execution_errors():
     assert "Application supply chain:" not in joined  # zero → hidden
 
 
-from core.report_renderer import _scan_reliability_lines
-
-
 def test_scan_reliability_absent_without_errors():
     report = _dynamic_report(assessments=[_fail("Direct Prompt Injection", "pi-1")], total=1)
     assert _scan_reliability_lines(report) == []
@@ -358,9 +345,6 @@ def test_scan_reliability_uses_specific_remediation_for_static_error():
     # "Re-run the scan and review the failing scanner dependency or service."
     # That remediation is stored in scan_reliability ReportRisk, so "specific-when-known" applies.
     assert "Re-run the scan and review the failing scanner dependency or service." in joined
-
-
-from core.report_renderer import render_console_text
 
 
 def test_render_console_text_section_order():
