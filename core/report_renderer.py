@@ -221,10 +221,17 @@ def _parse_version(value: str):
         return Version(value)
     except Exception:
         # Fallback: compare numeric-dotted segments; non-numeric segments sort as 0.
+        # Only the leading digits of each segment count, so a pre-release like
+        # "3.13a1" parses as (3, 13) rather than (3, 131) and stays below "3.14".
         segments = []
         for segment in value.split("."):
-            digits = "".join(ch for ch in segment if ch.isdigit())
-            segments.append(int(digits) if digits else 0)
+            digits = []
+            for ch in segment:
+                if ch.isdigit():
+                    digits.append(ch)
+                else:
+                    break
+            segments.append(int("".join(digits)) if digits else 0)
         return tuple(segments)
 
 
@@ -268,15 +275,21 @@ def _aggregate_supply_chain(risks: list[ReportRisk]) -> list[dict]:
             order.append(key)
         if SEVERITY_RANK[risk.severity] > SEVERITY_RANK[group["severity"]]:
             group["severity"] = risk.severity
-        # An advisory's CVEs are "fixed" only if that advisory ships a fixed version.
-        bucket = "fixed_cves" if risk.fixed_version else "unfixed_cves"
+        # A CVE is "fixed" if any advisory for this package ships a fixed version.
+        # Classification must not depend on advisory order, so a later fixed
+        # advisory promotes a CVE out of unfixed_cves seen earlier.
         if risk.fixed_version:
             group["fixed_versions"].append(risk.fixed_version)
         else:
             group["has_unfixed"] = True
         for cve in risk.vulnerability_ids or []:
-            if cve not in group["fixed_cves"] and cve not in group["unfixed_cves"]:
-                group[bucket].append(cve)
+            if risk.fixed_version:
+                if cve in group["unfixed_cves"]:
+                    group["unfixed_cves"].remove(cve)
+                if cve not in group["fixed_cves"]:
+                    group["fixed_cves"].append(cve)
+            elif cve not in group["fixed_cves"] and cve not in group["unfixed_cves"]:
+                group["unfixed_cves"].append(cve)
 
     result = [groups[key] for key in order]
     result.sort(key=lambda g: (-SEVERITY_RANK[g["severity"]], (g["package_name"] or "")))
@@ -481,10 +494,12 @@ def _scan_reliability_lines(report: ScanReport) -> list[str]:
 
     category_by_payload = {a.payload_id: a.category for a in report.dynamic_assessments}
 
+    reliability = report.findings.scan_reliability
     lines: list[str] = []
-    for index, (error, risk) in enumerate(
-        zip(report.execution_errors, report.findings.scan_reliability), start=1
-    ):
+    for index, error in enumerate(report.execution_errors, start=1):
+        # execution_errors and scan_reliability are built 1:1 in the same order,
+        # but index defensively so a length mismatch never drops an error.
+        risk = reliability[index - 1] if index - 1 < len(reliability) else None
         subject = error.payload_id or "(no payload)"
         lines.append(f"{index}. {subject} · {error.message}")
         impact = (
@@ -496,7 +511,7 @@ def _scan_reliability_lines(report: ScanReport) -> list[str]:
         coverage = category_by_payload.get(error.payload_id) if error.payload_id else None
         if coverage:
             lines.append(f"   Coverage: {coverage}")
-        action = risk.remediation or GENERIC_RELIABILITY_ACTION
+        action = (risk.remediation if risk else None) or GENERIC_RELIABILITY_ACTION
         lines.append(f"   Action:   {action}")
         lines.append("")
     if lines and lines[-1] == "":
