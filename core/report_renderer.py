@@ -152,10 +152,13 @@ def _scan_context_lines(report: ScanReport) -> list[str]:
         return []
 
     error_count = _payload_error_count(report)
+    error_payloads_count = len(
+        {e.payload_id for e in report.execution_errors if e.payload_id}
+    )
     total = report.dynamic_total_payloads
     if total <= 0:
-        total = len(report.dynamic_assessments) + error_count
-    evaluated = max(total - error_count, 0)
+        total = len(report.dynamic_assessments) + error_payloads_count
+    evaluated = max(total - error_payloads_count, 0)
 
     lines = [
         f"Target:   {report.target_model or 'unknown'}",
@@ -477,23 +480,23 @@ def _scan_reliability_lines(report: ScanReport) -> list[str]:
         return []
 
     category_by_payload = {a.payload_id: a.category for a in report.dynamic_assessments}
-    remediation_by_payload = {
-        risk.payload_ids[0]: risk.remediation
-        for risk in report.findings.scan_reliability
-        if risk.payload_ids and risk.remediation
-    }
 
     lines: list[str] = []
-    for index, error in enumerate(report.execution_errors, start=1):
+    for index, (error, risk) in enumerate(
+        zip(report.execution_errors, report.findings.scan_reliability), start=1
+    ):
         subject = error.payload_id or "(no payload)"
         lines.append(f"{index}. {subject} · {error.message}")
-        lines.append("   Impact:   payload was not evaluated")
+        impact = (
+            "payload was not evaluated"
+            if error.payload_id
+            else "scan coverage was reduced"
+        )
+        lines.append(f"   Impact:   {impact}")
         coverage = category_by_payload.get(error.payload_id) if error.payload_id else None
         if coverage:
             lines.append(f"   Coverage: {coverage}")
-        action = (
-            remediation_by_payload.get(error.payload_id) if error.payload_id else None
-        ) or GENERIC_RELIABILITY_ACTION
+        action = risk.remediation or GENERIC_RELIABILITY_ACTION
         lines.append(f"   Action:   {action}")
         lines.append("")
     if lines and lines[-1] == "":
