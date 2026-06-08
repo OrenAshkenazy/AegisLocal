@@ -179,3 +179,86 @@ def test_required_fixes_preserves_supply_chain_source_and_owner():
     assert "Source: pyproject.toml" in joined
     assert "Owner (from CODEOWNERS): Unassigned (no CODEOWNERS match)" in joined
     assert "CVE: CVE-2026-45409" in joined
+
+
+from core.report_renderer import _failed_payloads_lines
+
+
+def test_failed_payload_header_uses_severity_and_failure_ratio():
+    report = _dynamic_report(
+        assessments=[_fail("Direct Prompt Injection", "pi-001", tags=["OWASP:LLM01"])], total=1)
+    joined = "\n".join(_failed_payloads_lines(report))
+    assert "pi-001 · Direct Prompt Injection · FAIL · HIGH · 1/1 · OWASP: LLM01" in joined
+
+
+def test_failed_payload_expected_and_observed_lines():
+    from core.models import DynamicFindingAssessment, Severity
+    a = DynamicFindingAssessment(
+        payload_id="pi-001", category="Direct Prompt Injection", severity=Severity.HIGH,
+        verdict="FAIL", confidence="HIGH", judge_agreement="1/1",
+        expected_behavior="Refuse override.", verdict_reason="Model followed the injection.")
+    report = _dynamic_report(assessments=[a], total=1)
+    joined = "\n".join(_failed_payloads_lines(report))
+    assert "Expected: Refuse override." in joined
+    assert "Observed: Model followed the injection." in joined
+
+
+def test_failed_payload_evidence_unavailable_without_flag():
+    report = _dynamic_report(assessments=[_fail("Direct Prompt Injection", "pi-001")], total=1)
+    assert "Evidence: unavailable" in "\n".join(_failed_payloads_lines(report))
+
+
+def test_failed_payload_evidence_mismatch_renders_unavailable():
+    from core.models import DynamicFindingAssessment, Severity
+    a = DynamicFindingAssessment(
+        payload_id="pi-001", category="Direct Prompt Injection", severity=Severity.HIGH,
+        verdict="FAIL", confidence="HIGH", judge_agreement="1/1", evidence_available=True)
+    report = _dynamic_report(assessments=[a], total=1)  # no DynamicEvidence supplied
+    assert "Evidence: unavailable" in "\n".join(_failed_payloads_lines(report))
+
+
+def test_failed_payload_evidence_shown_when_available():
+    from core.models import DynamicFindingAssessment, DynamicEvidence, Severity
+    a = DynamicFindingAssessment(
+        payload_id="pi-001", category="Direct Prompt Injection", severity=Severity.HIGH,
+        verdict="FAIL", confidence="HIGH", judge_agreement="1/1", evidence_available=True)
+    ev = DynamicEvidence(
+        payload_id="pi-001", category="Direct Prompt Injection", severity=Severity.HIGH,
+        judge_verdict="FAIL", target_response_excerpt="leaked secret xyz", response_truncated=True)
+    from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
+    from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT, target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS, dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT, judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None, fallback_judge_model=None, include_evidence=True,
+        static_findings=[], dynamic_findings=[], dynamic_assessments=[a],
+        dynamic_evidence=[ev], execution_errors=[], scan_type="dynamic",
+        include_static_section=False, dynamic_total_payloads=1)
+    joined = "\n".join(_failed_payloads_lines(report))
+    assert 'Evidence: "leaked secret xyz" [truncated]' in joined
+
+
+def test_failed_payload_context_only_for_known_category():
+    report = _dynamic_report(assessments=[
+        _fail("Direct Prompt Injection", "pi-001"),
+        _fail("Tool Abuse", "tool-004")], total=2)
+    joined = "\n".join(_failed_payloads_lines(report))
+    assert "Context:  simulated tool access, no real tool execution observed" in joined
+    pi_block = joined.split("tool-004")[0]
+    assert "Context:" not in pi_block
+
+
+def test_failed_payload_exfil_shows_data_class():
+    report = _dynamic_report(
+        assessments=[_fail("Sensitive Data Exfiltration", "exfil-003", tags=["OWASP:LLM06"])], total=1)
+    assert "Data class: canary secret" in "\n".join(_failed_payloads_lines(report))
+
+
+def test_failed_payloads_sorted_by_severity_then_category():
+    from core.models import Severity
+    report = _dynamic_report(assessments=[
+        _fail("Tool Abuse", "tool-1", severity=Severity.HIGH),
+        _fail("Direct Prompt Injection", "pi-1", severity=Severity.CRITICAL)], total=2)
+    text = "\n".join(_failed_payloads_lines(report))
+    assert text.index("pi-1") < text.index("tool-1")

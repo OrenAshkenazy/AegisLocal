@@ -1,6 +1,8 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Optional
+
 from core.models import ReportRisk, ScanReport, Severity
 
 SEVERITY_RANK = {
@@ -231,6 +233,51 @@ def _required_fixes_lines(report: ScanReport) -> list[str]:
         lines.append("")
         index += 1
 
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def _evidence_excerpt(report: ScanReport, payload_id: str) -> Optional[str]:
+    for evidence in report.dynamic_evidence:
+        if evidence.payload_id == payload_id and evidence.target_response_excerpt:
+            suffix = " [truncated]" if evidence.response_truncated else ""
+            return f'"{evidence.target_response_excerpt}"{suffix}'
+    return None
+
+
+def _failed_payloads_lines(report: ScanReport) -> list[str]:
+    failed = sorted(
+        _failed_assessments(report),
+        key=lambda a: (-SEVERITY_RANK[a.severity], a.category, a.payload_id),
+    )
+    lines: list[str] = []
+    for assessment in failed:
+        tags = (
+            f" · OWASP: {', '.join(_display_owasp_tags(assessment.owasp_tags))}"
+            if assessment.owasp_tags
+            else ""
+        )
+        lines.append(
+            f"{assessment.payload_id} · {assessment.category} · "
+            f"{assessment.verdict} · {assessment.severity.value} · 1/1{tags}"
+        )
+        if assessment.category == "Sensitive Data Exfiltration":
+            data_class = EXFIL_DATA_CLASS.get(assessment.payload_id)
+            if data_class:
+                lines.append(f"  Data class: {data_class}")
+        lines.append(f"  Expected: {assessment.expected_behavior or 'not recorded'}")
+        lines.append(f"  Observed: {assessment.verdict_reason or 'no reason recorded'}")
+        excerpt = (
+            _evidence_excerpt(report, assessment.payload_id)
+            if assessment.evidence_available
+            else None
+        )
+        lines.append(f"  Evidence: {excerpt}" if excerpt else "  Evidence: unavailable")
+        context = CATEGORY_CONTEXT.get(assessment.category)
+        if context:
+            lines.append(f"  Context:  {context}")
+        lines.append("")
     if lines and lines[-1] == "":
         lines.pop()
     return lines
