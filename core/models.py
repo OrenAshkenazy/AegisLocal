@@ -105,6 +105,8 @@ class DynamicFindingAssessment(BaseModel):
     judge_agreement: str
     owasp_tags: List[str] = Field(default_factory=list)
     evidence_available: bool = False
+    expected_behavior: Optional[str] = None
+    verdict_reason: Optional[str] = None
 
 
 class ExecutionError(BaseModel):
@@ -180,6 +182,7 @@ class ScanReport(BaseModel):
     findings: RiskAreas = Field(default_factory=RiskAreas)
     dynamic_assessments: List[DynamicFindingAssessment] = Field(default_factory=list)
     dynamic_evidence: List[DynamicEvidence] = Field(default_factory=list)
+    dynamic_total_payloads: int = 0
     license_coverage: Optional[LicenseCoverage] = None
     owner_remediation: List[OwnerRemediation] = Field(default_factory=list)
     execution_errors: List[ExecutionError] = Field(default_factory=list)
