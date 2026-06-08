@@ -1,6 +1,7 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
+from collections import Counter
 from typing import Optional
 
 from core.models import ReportRisk, ScanReport, Severity
@@ -281,3 +282,38 @@ def _failed_payloads_lines(report: ScanReport) -> list[str]:
     if lines and lines[-1] == "":
         lines.pop()
     return lines
+
+
+def _severity_count_text(severities: Counter) -> str:
+    ordered = ["critical", "high", "medium", "low", "info"]
+    parts = [
+        f"{count} {severity}" if count > 1 else severity
+        for severity in ordered
+        if (count := severities.get(severity, 0))
+    ]
+    return ", ".join(parts) if parts else "confirmed"
+
+
+def _risk_count(risks: list[ReportRisk]) -> str:
+    return _severity_count_text(Counter(r.severity.value.lower() for r in risks))
+
+
+def _finding_count_lines(report: ScanReport) -> list[str]:
+    failed = _failed_assessments(report)
+    rows: list[tuple[str, str, bool]] = [
+        ("Application supply chain", _risk_count(report.findings.application_supply_chain),
+         bool(report.findings.application_supply_chain)),
+        ("Grouped findings", _risk_count(report.findings.model_behavior),
+         bool(report.findings.model_behavior)),
+        ("Failed payloads",
+         _severity_count_text(Counter(a.severity.value.lower() for a in failed)),
+         bool(failed)),
+        ("Model license", _risk_count(report.findings.model_license),
+         bool(report.findings.model_license)),
+        ("Scan reliability", _risk_count(report.findings.scan_reliability),
+         bool(report.findings.scan_reliability)),
+    ]
+    lines = [f"{label}: {value}" for label, value, present in rows if present]
+    if report.execution_errors:
+        lines.append(f"Execution errors: {len(report.execution_errors)}")
+    return lines or ["None"]

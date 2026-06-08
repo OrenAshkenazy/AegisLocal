@@ -262,3 +262,55 @@ def test_failed_payloads_sorted_by_severity_then_category():
         _fail("Direct Prompt Injection", "pi-1", severity=Severity.CRITICAL)], total=2)
     text = "\n".join(_failed_payloads_lines(report))
     assert text.index("pi-1") < text.index("tool-1")
+
+
+from core.report_renderer import _finding_count_lines
+
+
+def test_finding_counts_split_grouped_and_failed_payloads():
+    from core.models import GroupedFinding, Severity
+    from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
+    from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT, target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS, dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT, judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None, fallback_judge_model=None, include_evidence=False,
+        static_findings=[],
+        dynamic_findings=[GroupedFinding(
+            category="Direct Prompt Injection", severity=Severity.HIGH,
+            failed_count=1, payload_ids=["pi-1"], owasp_tags=["OWASP:LLM01"])],
+        dynamic_assessments=[_fail("Direct Prompt Injection", "pi-1")],
+        dynamic_evidence=[], execution_errors=[], scan_type="dynamic",
+        include_static_section=False, dynamic_total_payloads=1)
+    joined = "\n".join(_finding_count_lines(report))
+    assert "Grouped findings:" in joined
+    assert "Failed payloads:" in joined
+
+
+def test_finding_counts_preserve_supply_chain_row():
+    from core.models import Finding, Severity
+    from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
+    from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT, target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS, dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT, judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None, fallback_judge_model=None, include_evidence=False,
+        static_findings=[Finding(severity=Severity.MEDIUM, category="Dependency Vulnerability", description="x")],
+        dynamic_findings=[], dynamic_evidence=[], execution_errors=[],
+        scan_type="static", include_dynamic_section=False)
+    joined = "\n".join(_finding_count_lines(report))
+    assert "Application supply chain: medium" in joined
+
+
+def test_finding_counts_hides_zero_rows_and_shows_execution_errors():
+    from core.models import ErrorSource, ExecutionError
+    report = _dynamic_report(
+        assessments=[_fail("Direct Prompt Injection", "pi-1")],
+        errors=[ExecutionError(source=ErrorSource.DYNAMIC, message="x", payload_id="sys-1")],
+        total=2)
+    joined = "\n".join(_finding_count_lines(report))
+    assert "Failed payloads:" in joined
+    assert "Execution errors: 1" in joined
+    assert "Application supply chain:" not in joined  # zero → hidden
