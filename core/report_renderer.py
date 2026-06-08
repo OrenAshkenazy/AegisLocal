@@ -217,22 +217,31 @@ def _display_owasp_tags(tags: list[str]) -> list[str]:
 def _parse_version(value: str):
     try:
         from packaging.version import Version
+    except ImportError:
+        Version = None
 
-        return Version(value)
-    except Exception:
-        # Fallback: compare numeric-dotted segments; non-numeric segments sort as 0.
-        # Only the leading digits of each segment count, so a pre-release like
-        # "3.13a1" parses as (3, 13) rather than (3, 131) and stays below "3.14".
-        segments = []
-        for segment in value.split("."):
-            digits = []
-            for ch in segment:
-                if ch.isdigit():
-                    digits.append(ch)
-                else:
-                    break
-            segments.append(int("".join(digits)) if digits else 0)
-        return tuple(segments)
+    # When packaging is available, always return a Version so comparisons in
+    # _max_version never mix Version and tuple (which raises TypeError). An
+    # unparseable string sorts lowest via Version("0.0.0").
+    if Version is not None:
+        try:
+            return Version(value)
+        except Exception:
+            return Version("0.0.0")
+
+    # Fallback (no packaging): compare numeric-dotted segments consistently.
+    # Only the leading digits of each segment count, so a pre-release like
+    # "3.13a1" parses as (3, 13) rather than (3, 131) and stays below "3.14".
+    segments = []
+    for segment in value.split("."):
+        digits = []
+        for ch in segment:
+            if ch.isdigit():
+                digits.append(ch)
+            else:
+                break
+        segments.append(int("".join(digits)) if digits else 0)
+    return tuple(segments)
 
 
 def _max_version(versions: list[str]) -> Optional[str]:
