@@ -260,7 +260,7 @@ def test_human_report_shows_source_and_hides_zero_counts(capsys):
 
     assert "Source: pyproject.toml" in output
     assert "Owner (from CODEOWNERS): Unassigned (no CODEOWNERS match)" in output
-    assert "Application supply chain: medium" in output
+    assert "Application supply chain: 1 medium" in output
     assert "Scan reliability: 0" not in output
     assert "Model behavior: 0" not in output
 

@@ -111,6 +111,23 @@ GENERIC_MITIGATION = (
     "listed, and add category-specific mitigation before release."
 )
 
+# Shown when a package has at least one advisory with no upstream fix.
+SUPPLY_CHAIN_NO_FIX = (
+    "No upstream fix available — evaluate removing or replacing this dependency; "
+    "if it must stay, isolate it and document a risk exception."
+)
+
+# Opinionated, package-specific guidance for libraries that are unsafe or
+# unmaintained for their purpose regardless of the available patch level.
+# Keyed by lowercase package name.
+OPINIONATED_ADVICE = {
+    "ecdsa": (
+        "python-ecdsa is not constant-time (Minerva timing attack, CVE-2024-23342) and is "
+        "not actively hardened against side channels; migrate sensitive ECDSA/ECDH "
+        "operations to the maintained `cryptography` library."
+    ),
+}
+
 GENERIC_RELIABILITY_ACTION = "rerun scan before accepting coverage for this category"
 
 
@@ -194,6 +211,113 @@ def _display_owasp_tags(tags: list[str]) -> list[str]:
     return [tag.removeprefix("OWASP:") for tag in tags]
 
 
+def _parse_version(value: str):
+    try:
+        from packaging.version import Version
+
+        return Version(value)
+    except Exception:
+        # Fallback: compare numeric-dotted segments; non-numeric segments sort as 0.
+        segments = []
+        for segment in value.split("."):
+            digits = "".join(ch for ch in segment if ch.isdigit())
+            segments.append(int(digits) if digits else 0)
+        return tuple(segments)
+
+
+def _max_version(versions: list[str]) -> Optional[str]:
+    best = None
+    best_key = None
+    for version in versions:
+        key = _parse_version(version)
+        if best_key is None or key > best_key:
+            best, best_key = version, key
+    return best
+
+
+def _aggregate_supply_chain(risks: list[ReportRisk]) -> list[dict]:
+    """Collapse multiple advisories for the same package into one entry.
+
+    Console-only: the JSON report keeps per-advisory findings. Each group records the
+    highest available fixed version, the union of CVEs, the worst severity, and whether
+    any advisory has no upstream fix.
+    """
+    groups: dict[str, dict] = {}
+    order: list[str] = []
+    for risk in risks:
+        key = risk.package_name or f"__nopkg__{id(risk)}"
+        group = groups.get(key)
+        if group is None:
+            group = {
+                "package_name": risk.package_name,
+                "package_version": risk.package_version,
+                "severity": risk.severity,
+                "fixed_versions": [],
+                "cves": [],
+                "source_file": risk.source_file,
+                "owner": risk.owner,
+                "remediation": risk.remediation,
+                "description": risk.description,
+                "has_unfixed": False,
+            }
+            groups[key] = group
+            order.append(key)
+        if SEVERITY_RANK[risk.severity] > SEVERITY_RANK[group["severity"]]:
+            group["severity"] = risk.severity
+        if risk.fixed_version:
+            group["fixed_versions"].append(risk.fixed_version)
+        else:
+            group["has_unfixed"] = True
+        for cve in risk.vulnerability_ids or []:
+            if cve not in group["cves"]:
+                group["cves"].append(cve)
+
+    result = [groups[key] for key in order]
+    result.sort(key=lambda g: (-SEVERITY_RANK[g["severity"]], (g["package_name"] or "")))
+    return result
+
+
+def _supply_chain_advice(
+    package_name: Optional[str], has_unfixed: bool
+) -> Optional[str]:
+    curated = OPINIONATED_ADVICE.get((package_name or "").lower())
+    if curated:
+        return curated
+    if has_unfixed:
+        return SUPPLY_CHAIN_NO_FIX
+    return None
+
+
+def _supply_chain_entry_lines(index: int, group: dict) -> list[str]:
+    severity = group["severity"].value
+    package = group["package_name"]
+    fixed = _max_version(group["fixed_versions"]) if group["fixed_versions"] else None
+
+    if package and group["package_version"] and fixed:
+        title = f"{package} {group['package_version']} -> upgrade to {fixed} or later"
+    elif group["remediation"]:
+        title = group["remediation"].rstrip(".")
+    elif package:
+        title = package
+    else:
+        title = group["description"]
+
+    lines = [f"{index}. [{severity}] {title}"]
+    if group["cves"]:
+        label = "CVE" if len(group["cves"]) == 1 else "CVEs"
+        lines.append(f"   {label}: {', '.join(group['cves'])}")
+    advice = _supply_chain_advice(package, group["has_unfixed"])
+    if advice:
+        lines.append(f"   Action: {advice}")
+    if group["source_file"]:
+        lines.append(f"   Source: {group['source_file']}")
+        owner = f"Owner (from CODEOWNERS): {group['owner']}"
+        if group["owner"] == "Unassigned":
+            owner += " (no CODEOWNERS match)"
+        lines.append(f"   {owner}")
+    return lines
+
+
 def _required_fixes_lines(report: ScanReport) -> list[str]:
     lines: list[str] = []
     index = 1
@@ -215,7 +339,7 @@ def _required_fixes_lines(report: ScanReport) -> list[str]:
     for category, bucket in sorted(
         by_category.items(), key=lambda kv: (-SEVERITY_RANK[kv[1]["severity"]], kv[0])
     ):
-        lines.append(f"{index}. {category}")
+        lines.append(f"{index}. [{bucket['severity'].value}] {category}")
         bullets = CATEGORY_MITIGATION.get(category)
         if bullets:
             for bullet in bullets:
@@ -228,12 +352,15 @@ def _required_fixes_lines(report: ScanReport) -> list[str]:
         lines.append("")
         index += 1
 
-    # Block 2: preserved supply-chain + model-license rendering (original detail)
-    for risk in [
-        *report.findings.application_supply_chain,
-        *report.findings.model_license,
-    ]:
-        lines.append(f"{index}. {_risk_title(risk)}")
+    # Block 2: supply chain, aggregated per package (one upgrade target + union of CVEs).
+    for group in _aggregate_supply_chain(report.findings.application_supply_chain):
+        lines.extend(_supply_chain_entry_lines(index, group))
+        lines.append("")
+        index += 1
+
+    # Block 3: model-license findings, original detail with severity prefix.
+    for risk in report.findings.model_license:
+        lines.append(f"{index}. [{risk.severity.value}] {_risk_title(risk)}")
         for detail in _risk_details(risk):
             lines.append(f"   {detail}")
         lines.append("")
@@ -292,7 +419,7 @@ def _failed_payloads_lines(report: ScanReport) -> list[str]:
 def _severity_count_text(severities: Counter) -> str:
     ordered = ["critical", "high", "medium", "low", "info"]
     parts = [
-        f"{count} {severity}" if count > 1 else severity
+        f"{count} {severity}"
         for severity in ordered
         if (count := severities.get(severity, 0))
     ]

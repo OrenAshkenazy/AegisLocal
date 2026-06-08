@@ -190,6 +190,92 @@ def test_required_fixes_preserves_supply_chain_source_and_owner():
     assert "CVE: CVE-2026-45409" in joined
 
 
+def _static_report(findings):
+    from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
+    from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
+    return build_report(
+        target_endpoint=DEFAULT_ENDPOINT, target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS, dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT, judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None, fallback_judge_model=None, include_evidence=False,
+        static_findings=findings, dynamic_findings=[], dynamic_evidence=[],
+        execution_errors=[], scan_type="static", include_dynamic_section=False)
+
+
+def test_supply_chain_aggregates_by_package():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.HIGH, category="Dependency Vulnerability",
+                description="litellm a", package_name="litellm", package_version="1.82.2",
+                fixed_version="1.83.0", vulnerability_id="CVE-A"),
+        Finding(severity=Severity.CRITICAL, category="Dependency Vulnerability",
+                description="litellm b", package_name="litellm", package_version="1.82.2",
+                fixed_version="1.83.10", vulnerability_id="CVE-B"),
+        Finding(severity=Severity.MEDIUM, category="Dependency Vulnerability",
+                description="litellm c", package_name="litellm", package_version="1.82.2",
+                fixed_version="1.83.7", vulnerability_id="CVE-C"),
+    ])
+    joined = "\n".join(_required_fixes_lines(report))
+    # One aggregated litellm entry, highest fixed version, union of CVEs, max severity.
+    assert joined.count("litellm 1.82.2 -> upgrade to") == 1
+    assert "upgrade to 1.83.10 or later" in joined
+    assert "[CRITICAL] litellm" in joined
+    assert "CVE-A" in joined and "CVE-B" in joined and "CVE-C" in joined
+
+
+def test_required_fixes_show_severity_prefix():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.CRITICAL, category="Dependency Vulnerability",
+                description="x", package_name="mako", package_version="1.3.10",
+                fixed_version="1.3.12", vulnerability_id="CVE-X"),
+    ])
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "[CRITICAL] mako 1.3.10 -> upgrade to 1.3.12 or later" in joined
+
+
+def test_supply_chain_no_fix_shows_opinionated_action():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.HIGH, category="Dependency Vulnerability",
+                description="some abandoned lib vuln", package_name="somelib",
+                package_version="1.0.0", fixed_version=None, vulnerability_id="CVE-NOFIX"),
+    ])
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "CVE-NOFIX" in joined
+    assert "Action:" in joined
+    assert "No upstream fix available" in joined
+
+
+def test_supply_chain_ecdsa_curated_advice():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.HIGH, category="Dependency Vulnerability",
+                description="ecdsa fixable", package_name="ecdsa", package_version="0.19.1",
+                fixed_version="0.19.2", vulnerability_id="CVE-2026-33936"),
+        Finding(severity=Severity.MEDIUM, category="Dependency Vulnerability",
+                description="ecdsa minerva", package_name="ecdsa", package_version="0.19.1",
+                fixed_version=None, vulnerability_id="CVE-2024-23342"),
+    ])
+    joined = "\n".join(_required_fixes_lines(report))
+    # Aggregated: upgrade to fixable version AND opinionated migrate advice for the no-fix CVE.
+    assert "ecdsa 0.19.1 -> upgrade to 0.19.2 or later" in joined
+    assert "cryptography" in joined  # curated advice names the maintained alternative
+    assert "CVE-2024-23342" in joined
+
+
+def test_finding_counts_always_show_count_for_single():
+    from core.models import Finding, Severity
+    report = _static_report([
+        Finding(severity=Severity.LOW, category="Dependency Vulnerability",
+                description="x", package_name="p", package_version="1.0",
+                fixed_version="1.1", vulnerability_id="CVE-L"),
+    ])
+    joined = "\n".join(_finding_count_lines(report))
+    assert "Application supply chain: 1 low" in joined
+    assert "Application supply chain: low" not in joined
+
+
 def test_failed_payload_header_uses_severity_and_failure_ratio():
     report = _dynamic_report(
         assessments=[_fail("Direct Prompt Injection", "pi-001", tags=["OWASP:LLM01"])], total=1)
@@ -304,7 +390,7 @@ def test_finding_counts_preserve_supply_chain_row():
         dynamic_findings=[], dynamic_evidence=[], execution_errors=[],
         scan_type="static", include_dynamic_section=False)
     joined = "\n".join(_finding_count_lines(report))
-    assert "Application supply chain: medium" in joined
+    assert "Application supply chain: 1 medium" in joined
 
 
 def test_finding_counts_hides_zero_rows_and_shows_execution_errors():
