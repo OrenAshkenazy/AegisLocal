@@ -1,7 +1,7 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
-from core.models import ScanReport, Severity
+from core.models import ReportRisk, ScanReport, Severity
 
 SEVERITY_RANK = {
     Severity.INFO: 0,
@@ -145,4 +145,92 @@ def _scan_context_lines(report: ScanReport) -> list[str]:
     for category, (label, value) in CAPABILITY_LINES.items():
         if category in failed_categories:
             lines.append(f"{label + ':':<9} {value}")
+    return lines
+
+
+def _risk_title(risk: ReportRisk) -> str:
+    if risk.package_name and risk.package_version and risk.fixed_version:
+        return (
+            f"{risk.package_name} {risk.package_version} -> "
+            f"upgrade to {risk.fixed_version} or later"
+        )
+    if risk.payload_ids and risk.category != "Scan Reliability":
+        return f"{risk.category} failed"
+    if risk.remediation:
+        return risk.remediation.rstrip(".")
+    return risk.description
+
+
+def _risk_details(risk: ReportRisk) -> list[str]:
+    details: list[str] = []
+    if risk.payload_ids and risk.category != "Scan Reliability":
+        details.append(f"Payload type: {risk.category}")
+        details.append(f"Payloads: {', '.join(risk.payload_ids)}")
+    if risk.owasp_tags:
+        details.append(f"OWASP: {', '.join(_display_owasp_tags(risk.owasp_tags))}")
+    if risk.vulnerability_ids:
+        label = "CVE" if len(risk.vulnerability_ids) == 1 else "CVEs"
+        details.append(f"{label}: {', '.join(risk.vulnerability_ids)}")
+    if risk.source_file:
+        details.append(f"Source: {risk.source_file}")
+        owner_detail = f"Owner (from CODEOWNERS): {risk.owner}"
+        if risk.owner == "Unassigned":
+            owner_detail += " (no CODEOWNERS match)"
+        details.append(owner_detail)
+    if risk.payload_ids and risk.category != "Scan Reliability" and risk.remediation:
+        details.append(f"Mitigation: {risk.remediation.rstrip('.')}")
+    return details
+
+
+def _display_owasp_tags(tags: list[str]) -> list[str]:
+    return [tag.removeprefix("OWASP:") for tag in tags]
+
+
+def _required_fixes_lines(report: ScanReport) -> list[str]:
+    lines: list[str] = []
+    index = 1
+
+    # Block 1: model behavior, sourced from failed HIGH/CRITICAL assessments
+    failed = [
+        a for a in _failed_assessments(report)
+        if SEVERITY_RANK[a.severity] >= SEVERITY_RANK[Severity.HIGH]
+    ]
+    by_category: dict[str, dict] = {}
+    for a in failed:
+        bucket = by_category.setdefault(
+            a.category, {"severity": a.severity, "ids": [], "tags": set()})
+        bucket["ids"].append(a.payload_id)
+        bucket["tags"].update(a.owasp_tags)
+        if SEVERITY_RANK[a.severity] > SEVERITY_RANK[bucket["severity"]]:
+            bucket["severity"] = a.severity
+
+    for category, bucket in sorted(
+        by_category.items(), key=lambda kv: (-SEVERITY_RANK[kv[1]["severity"]], kv[0])
+    ):
+        lines.append(f"{index}. {category}")
+        bullets = CATEGORY_MITIGATION.get(category)
+        if bullets:
+            for bullet in bullets:
+                lines.append(f"   - {bullet}")
+        else:
+            lines.append(f"   Payloads: {', '.join(sorted(bucket['ids']))}")
+            lines.append(f"   - {GENERIC_MITIGATION}")
+        if bucket["tags"]:
+            lines.append(f"   OWASP: {', '.join(_display_owasp_tags(sorted(bucket['tags'])))}")
+        lines.append("")
+        index += 1
+
+    # Block 2: preserved supply-chain + model-license rendering (original detail)
+    for risk in [
+        *report.findings.application_supply_chain,
+        *report.findings.model_license,
+    ]:
+        lines.append(f"{index}. {_risk_title(risk)}")
+        for detail in _risk_details(risk):
+            lines.append(f"   {detail}")
+        lines.append("")
+        index += 1
+
+    if lines and lines[-1] == "":
+        lines.pop()
     return lines

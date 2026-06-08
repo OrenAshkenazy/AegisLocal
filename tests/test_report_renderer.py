@@ -111,3 +111,71 @@ def test_scan_context_empty_for_static_scan():
         scan_type="static", include_dynamic_section=False,
     )
     assert _scan_context_lines(report) == []
+
+
+from core.report_renderer import _required_fixes_lines
+
+
+def _fail(category, payload_id="x-1", severity=None, tags=None):
+    from core.models import DynamicFindingAssessment, Severity
+    return DynamicFindingAssessment(
+        payload_id=payload_id, category=category, severity=severity or Severity.HIGH,
+        verdict="FAIL", confidence="HIGH", judge_agreement="1/1", owasp_tags=tags or [],
+    )
+
+
+def test_required_fixes_derives_from_assessments_not_grouped():
+    report = _dynamic_report(
+        assessments=[_fail("System Prompt Extraction", "sys-001", tags=["OWASP:LLM07"])], total=1)
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "System Prompt Extraction" in joined
+    assert "Treat system prompts as control instructions, not a secret store." in joined
+    assert "OWASP: LLM07" in joined
+
+
+def test_required_fixes_covers_every_high_critical_category():
+    report = _dynamic_report(assessments=[
+        _fail("System Prompt Extraction", "sys-001", tags=["OWASP:LLM07"]),
+        _fail("Tool Abuse", "tool-004", tags=["OWASP:LLM02"]),
+    ], total=2)
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "System Prompt Extraction" in joined
+    assert "Tool Abuse" in joined
+    assert "Deny user-supplied tool directives." in joined
+
+
+def test_required_fixes_excludes_low_medium_severity():
+    from core.models import Severity
+    report = _dynamic_report(assessments=[_fail("Toxicity", "tox-1", severity=Severity.MEDIUM)], total=1)
+    assert _required_fixes_lines(report) == []
+
+
+def test_required_fixes_unknown_category_shows_generic_fallback():
+    report = _dynamic_report(assessments=[_fail("Unmapped Category", "u-1")], total=1)
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "Unmapped Category" in joined
+    assert "Payloads: u-1" in joined
+    assert "add category-specific mitigation before release" in joined
+
+
+def test_required_fixes_preserves_supply_chain_source_and_owner():
+    from core.models import Finding, Severity
+    from main import DEFAULT_ENDPOINT, DEFAULT_MODEL, build_report
+    from engines.dynamic_fuzzer import DYNAMIC_CONCURRENCY, TARGET_TIMEOUT_SECONDS
+    report = build_report(
+        target_endpoint=DEFAULT_ENDPOINT, target_model=DEFAULT_MODEL,
+        target_timeout_seconds=TARGET_TIMEOUT_SECONDS, dynamic_concurrency=DYNAMIC_CONCURRENCY,
+        judge_endpoint=DEFAULT_ENDPOINT, judge_model=DEFAULT_MODEL,
+        fallback_judge_endpoint=None, fallback_judge_model=None, include_evidence=False,
+        static_findings=[Finding(
+            severity=Severity.MEDIUM, category="Dependency Vulnerability",
+            description="idna==3.13 is affected by CVE-2026-45409.", package_name="idna",
+            package_version="3.13", fixed_version="3.15", vulnerability_id="CVE-2026-45409",
+            source_file="pyproject.toml")],
+        dynamic_findings=[], dynamic_evidence=[], execution_errors=[],
+        scan_type="static", include_dynamic_section=False)
+    joined = "\n".join(_required_fixes_lines(report))
+    assert "idna 3.13 -> upgrade to 3.15 or later" in joined
+    assert "Source: pyproject.toml" in joined
+    assert "Owner (from CODEOWNERS): Unassigned (no CODEOWNERS match)" in joined
+    assert "CVE: CVE-2026-45409" in joined
