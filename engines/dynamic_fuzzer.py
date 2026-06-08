@@ -760,13 +760,10 @@ def build_dynamic_assessments(
                 ),
                 evidence_available=include_evidence and evaluation.target_response is not None,
                 expected_behavior=evaluation.payload.expected_behavior,
-                # TODO: rename evaluation.judge_reason to evaluation.verdict_reason
-                # so the fuzzer layer stops leaking judge terminology.
-                verdict_reason=(
-                    evaluation.judge_reason
-                    or getattr(evaluation, "reason", None)
-                    or getattr(evaluation, "failure_reason", None)
-                ),
+                # Source field is still named judge_reason on PayloadEvaluation; treat it
+                # as the generic sanitized verdict explanation. TODO: rename the evaluation
+                # field to verdict_reason so the fuzzer layer stops leaking judge terminology.
+                verdict_reason=evaluation.judge_reason,
             )
         )
     return sorted(assessments, key=lambda item: item.payload_id)
