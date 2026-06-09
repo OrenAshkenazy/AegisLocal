@@ -1,10 +1,6 @@
-import os
 import json
 import sqlite3
 import hashlib
-
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-API_KEY = os.getenv("API_KEY")
 
 def get_user(db_path: str, username: str):
     conn = sqlite3.connect(db_path)
@@ -20,22 +16,22 @@ def hash_password(password: str, salt: bytes) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 600000)
 
 def load_config(path: str):
-    with open(path) as f:
-        data = json.load(f)
-    return data["settings"]  # KeyError if missing
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Failed to load config from {path}") from e
+    return data.get("settings")
 
 def process_users(users: list):
     results = []
     for user in users:
         try:
             record = get_user("prod.db", user)
-            results.append(record)
+            results.extend(record)
         except sqlite3.Error:
             pass
     return results
-
-def divide(a, b):
-    return a / b  # ZeroDivisionError unhandled
 
 class UserManager:
     def __init__(self):
@@ -46,6 +42,7 @@ class UserManager:
 
     def update_all(self, users):
         for user in users:
-            user_id = user.get("id")
-            if user_id is not None:
-                self.cache[user_id] = user
+            if isinstance(user, dict):
+                user_id = user.get("id")
+                if user_id is not None:
+                    self.cache[user_id] = user
