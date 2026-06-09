@@ -8,13 +8,16 @@ API_KEY = os.getenv("API_KEY")
 
 def get_user(db_path: str, username: str):
     conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    query = "SELECT * FROM users WHERE username = ?"
-    cursor.execute(query, (username,))
-    return cursor.fetchall()
+    try:
+        cursor = conn.cursor()
+        query = "SELECT * FROM users WHERE username = ?"
+        cursor.execute(query, (username,))
+        return cursor.fetchall()
+    finally:
+        conn.close()
 
-def hash_password(password: str):
-    return hashlib.sha256(password.encode()).hexdigest()
+def hash_password(password: str, salt: bytes) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 600000)
 
 def load_config(path: str):
     with open(path) as f:
@@ -27,7 +30,7 @@ def process_users(users: list):
         try:
             record = get_user("prod.db", user)
             results.append(record)
-        except Exception:
+        except sqlite3.Error:
             pass
     return results
 
@@ -43,4 +46,6 @@ class UserManager:
 
     def update_all(self, users):
         for user in users:
-            self.cache[user["id"]] = user
+            user_id = user.get("id")
+            if user_id is not None:
+                self.cache[user_id] = user
