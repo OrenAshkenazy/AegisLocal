@@ -21,16 +21,26 @@ def load_config(path: str):
             data = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError) as e:
         raise RuntimeError(f"Failed to load config from {path}") from e
-    return data.get("settings")
+    return data.get("settings") if isinstance(data, dict) else None
 
 def process_users(users: list):
+    if not users:
+        return []
     results = []
-    for user in users:
+    try:
+        conn = sqlite3.connect("prod.db")
         try:
-            record = get_user("prod.db", user)
-            results.extend(record)
-        except sqlite3.Error:
-            pass
+            cursor = conn.cursor()
+            for user in users:
+                try:
+                    cursor.execute("SELECT * FROM users WHERE username = ?", (user,))
+                    results.extend(cursor.fetchall())
+                except sqlite3.Error:
+                    pass
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        pass
     return results
 
 class UserManager:
@@ -41,6 +51,8 @@ class UserManager:
         return self.cache.get(key)
 
     def update_all(self, users):
+        if not users:
+            return
         for user in users:
             if isinstance(user, dict):
                 user_id = user.get("id")
