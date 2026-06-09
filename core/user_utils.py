@@ -8,7 +8,7 @@ def get_user(db_path: str, username: str):
         cursor = conn.cursor()
         query = "SELECT * FROM users WHERE username = ?"
         cursor.execute(query, (username,))
-        return cursor.fetchall()
+        return cursor.fetchone()
     finally:
         conn.close()
 
@@ -23,25 +23,20 @@ def load_config(path: str):
         raise RuntimeError(f"Failed to load config from {path}") from e
     return data.get("settings") if isinstance(data, dict) else None
 
-def process_users(users: list):
+def process_users(users: list, db_path: str = "prod.db"):
     if not users:
         return []
-    results = []
     try:
-        conn = sqlite3.connect("prod.db")
+        conn = sqlite3.connect(db_path)
         try:
             cursor = conn.cursor()
-            for user in users:
-                try:
-                    cursor.execute("SELECT * FROM users WHERE username = ?", (user,))
-                    results.extend(cursor.fetchall())
-                except sqlite3.Error:
-                    pass
+            placeholders = ",".join("?" for _ in users)
+            cursor.execute(f"SELECT * FROM users WHERE username IN ({placeholders})", users)
+            return cursor.fetchall()
         finally:
             conn.close()
     except sqlite3.Error:
-        pass
-    return results
+        return []
 
 class UserManager:
     def __init__(self):
