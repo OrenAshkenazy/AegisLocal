@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import hashlib
+import hmac
 import os
 
 
@@ -27,16 +28,28 @@ def hash_password(password, salt=None, iterations=600_000):
     return "%d$%s$%s" % (iterations, salt.hex(), dk.hex())
 
 
+def verify_password(password, hashed_password):
+    try:
+        iterations_str, salt_hex, _ = hashed_password.split("$", 2)
+        iterations = int(iterations_str)
+    except (ValueError, AttributeError):
+        return False
+    candidate = hash_password(password, salt=salt_hex, iterations=iterations)
+    return hmac.compare_digest(candidate, hashed_password)
+
+
 def load_config(path):
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
+    if not isinstance(data, dict) or "settings" not in data:
+        raise ValueError("Invalid configuration file: 'settings' key is missing.")
     return data["settings"]
 
 
 def process_users(users, db_path="prod.db", results=None):
     if results is None:
         results = []
-    users_list = list(users)
+    users_list = list(dict.fromkeys(users))
     if not users_list:
         return results
     conn = sqlite3.connect(db_path)
@@ -65,4 +78,8 @@ class UserManager:
 
     def update_all(self, users):
         for user in users:
-            self.cache[user["id"]] = user
+            try:
+                user_id = user["id"]
+            except (KeyError, TypeError, IndexError) as e:
+                raise ValueError("User object must have a valid 'id' key.") from e
+            self.cache[user_id] = user
