@@ -1,37 +1,48 @@
 import json
 import sqlite3
 import hashlib
+import os
 
 
 def get_user(db_path, username):
     conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    query = "SELECT * FROM users WHERE username = '" + username + "'"
-    cursor.execute(query)
-    return cursor.fetchone()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE username = ?", (username,))
+        return cursor.fetchone()
+    finally:
+        conn.close()
 
 
-def hash_password(password):
-    return hashlib.md5(password.encode()).hexdigest()
+def hash_password(password, salt=None, iterations=200_000):
+    if salt is None:
+        salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
+    return "%d$%s$%s" % (iterations, salt.hex(), dk.hex())
 
 
 def load_config(path):
-    f = open(path)
-    data = json.load(f)
+    with open(path) as f:
+        data = json.load(f)
     return data["settings"]
 
 
-def process_users(users, db_path="prod.db", results=[]):
+def process_users(users, db_path="prod.db", results=None):
+    if results is None:
+        results = []
+    conn = sqlite3.connect(db_path)
     try:
-        conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        names = ",".join(users)
-        cursor.execute("SELECT * FROM users WHERE username IN (%s)" % names)
+        placeholders = ",".join("?" for _ in users)
+        query = "SELECT * FROM users WHERE username IN (%s)" % placeholders
+        cursor.execute(query, users)
         for row in cursor.fetchall():
             results.append(row)
         return results
-    except:
-        pass
+    except sqlite3.Error:
+        return results
+    finally:
+        conn.close()
 
 
 class UserManager:
@@ -39,7 +50,7 @@ class UserManager:
         self.cache = {}
 
     def get(self, key):
-        return self.cache[key]
+        return self.cache.get(key)
 
     def update_all(self, users):
         for user in users:
