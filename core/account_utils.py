@@ -15,14 +15,14 @@ def get_user(db_path, username):
         conn.close()
 
 
-def hash_password(password, salt=None, iterations=200_000):
+def hash_password(password, salt=None, iterations=600_000):
     if salt is None:
         salt = os.urandom(16)
     elif isinstance(salt, str):
-        try:
-            salt = bytes.fromhex(salt)
-        except ValueError:
-            salt = salt.encode()
+        # A string salt is the hex form this function emits; decode it back to
+        # the original bytes so verification round-trips. Invalid hex raises
+        # ValueError rather than silently changing the salt bytes.
+        salt = bytes.fromhex(salt)
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
     return "%d$%s$%s" % (iterations, salt.hex(), dk.hex())
 
@@ -43,10 +43,14 @@ def process_users(users, db_path="prod.db", results=None):
     conn.row_factory = sqlite3.Row
     try:
         cursor = conn.cursor()
-        placeholders = ",".join("?" for _ in users_list)
-        query = "SELECT * FROM users WHERE username IN (%s)" % placeholders
-        cursor.execute(query, users_list)
-        results.extend(cursor.fetchall())
+        # SQLite caps host parameters (default 999), so query in chunks.
+        limit = 999
+        for i in range(0, len(users_list), limit):
+            chunk = users_list[i : i + limit]
+            placeholders = ",".join("?" for _ in chunk)
+            query = "SELECT * FROM users WHERE username IN (%s)" % placeholders
+            cursor.execute(query, chunk)
+            results.extend(cursor.fetchall())
         return results
     finally:
         conn.close()
