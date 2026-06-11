@@ -19,7 +19,10 @@ def hash_password(password, salt=None, iterations=200_000):
     if salt is None:
         salt = os.urandom(16)
     elif isinstance(salt, str):
-        salt = salt.encode()
+        try:
+            salt = bytes.fromhex(salt)
+        except ValueError:
+            salt = salt.encode()
     dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations)
     return "%d$%s$%s" % (iterations, salt.hex(), dk.hex())
 
@@ -33,19 +36,17 @@ def load_config(path):
 def process_users(users, db_path="prod.db", results=None):
     if results is None:
         results = []
-    if not users:
+    users_list = list(users)
+    if not users_list:
         return results
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         cursor = conn.cursor()
-        placeholders = ",".join("?" for _ in users)
+        placeholders = ",".join("?" for _ in users_list)
         query = "SELECT * FROM users WHERE username IN (%s)" % placeholders
-        cursor.execute(query, users)
-        for row in cursor.fetchall():
-            results.append(row)
-        return results
-    except sqlite3.Error:
+        cursor.execute(query, users_list)
+        results.extend(cursor.fetchall())
         return results
     finally:
         conn.close()
