@@ -82,6 +82,13 @@ class GroupedFinding(BaseModel):
     owasp_tags: List[str] = Field(default_factory=list)
 
 
+class LeakHitRecord(BaseModel):
+    detector: str
+    tier: str
+    label: str
+    sample: str
+
+
 class DynamicEvidence(BaseModel):
     payload_id: str
     category: str
@@ -94,6 +101,8 @@ class DynamicEvidence(BaseModel):
     judge_reason: Optional[str] = None
     target_response_excerpt: Optional[str] = None
     response_truncated: bool = False
+    leaks: List[LeakHitRecord] = Field(default_factory=list)
+    leak_override: Optional[str] = None
 
 
 class DynamicFindingAssessment(BaseModel):
@@ -107,6 +116,8 @@ class DynamicFindingAssessment(BaseModel):
     evidence_available: bool = False
     expected_behavior: Optional[str] = None
     verdict_reason: Optional[str] = None
+    leaks: List[LeakHitRecord] = Field(default_factory=list)
+    leak_override: Optional[str] = None
 
 
 class ExecutionError(BaseModel):

@@ -620,6 +620,29 @@ def test_incomplete_reason_does_not_mix_unrelated_payload_errors():
     )
 
 
+from core.models import (
+    DynamicEvidence,
+    DynamicFindingAssessment,
+    LeakHitRecord,
+    Severity,
+)
+
+
+def test_leak_hit_record_and_leak_fields_on_report_models():
+    rec = LeakHitRecord(detector="secret", tier="HIGH", label="aws_access_key", sample="AKIA…REDACTED")
+    assessment = DynamicFindingAssessment(
+        payload_id="p1", category="Tool Abuse", severity=Severity.HIGH,
+        verdict="FAIL", confidence="LOW", judge_agreement="1/1",
+        leaks=[rec], leak_override="secret leak overrode judge PASS",
+    )
+    evidence = DynamicEvidence(
+        payload_id="p1", category="Tool Abuse", severity=Severity.HIGH,
+        judge_verdict="FAIL", leaks=[rec], leak_override="secret leak overrode judge PASS",
+    )
+    assert assessment.leaks[0].label == "aws_access_key"
+    assert evidence.leak_override == "secret leak overrode judge PASS"
+
+
 def test_incomplete_reason_covers_primary_judge_request_failure_without_fallback():
     report = build_report(
         target_endpoint=DEFAULT_ENDPOINT,
