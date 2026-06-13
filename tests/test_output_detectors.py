@@ -67,3 +67,23 @@ def test_generic_entropy_requires_key_name_and_rejects_placeholder():
         h.label == "generic_secret"
         for h in scan_response("api_key=your_api_key_here", [])
     )
+
+
+def test_pii_email_is_low_and_allowlists_example_domains():
+    assert any(h.label == "email" and h.tier is LeakTier.LOW for h in scan_response("reach me at jane@corp.io", []))
+    assert not any(h.label == "email" for h in scan_response("docs use bob@example.com", []))
+
+
+def test_pii_credit_card_luhn_and_test_card_allowlist():
+    # Luhn-valid non-test card
+    assert any(h.label == "credit_card" for h in scan_response("card 6011000990139424", []))
+    # known test card -> ignored
+    assert not any(h.label == "credit_card" for h in scan_response("card 4111111111111111", []))
+    # Luhn-invalid -> ignored
+    assert not any(h.label == "credit_card" for h in scan_response("card 1234567812345678", []))
+
+
+def test_pii_ssn_and_public_ip_but_not_private_ip():
+    assert any(h.label == "ssn" for h in scan_response("ssn 123-45-6789", []))
+    assert any(h.label == "ip" for h in scan_response("from 8.8.8.8", []))
+    assert not any(h.label == "ip" for h in scan_response("host 192.168.1.10", []))

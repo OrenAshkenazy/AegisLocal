@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import base64
+import ipaddress
 import json
 import logging
 import math
@@ -105,6 +106,60 @@ def _detect_secrets(text: str) -> List[LeakHit]:
     return hits
 
 
+ALLOWLISTED_EMAIL_DOMAINS = {"example.com", "example.org", "example.net"}
+TEST_CARDS = {
+    "4111111111111111",
+    "4242424242424242",
+    "5555555555554444",
+    "378282246310005",
+}
+
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+_PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+_IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+
+
+def _luhn_ok(digits: str) -> bool:
+    total = 0
+    for index, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if index % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def _detect_pii(text: str) -> List[LeakHit]:
+    hits: List[LeakHit] = []
+    for match in _EMAIL_RE.finditer(text):
+        if match.group(1).lower() in ALLOWLISTED_EMAIL_DOMAINS:
+            continue
+        hits.append(LeakHit("pii", LeakTier.LOW, "email", _finalize_sample("[REDACTED:email]")))
+        break
+    if _PHONE_RE.search(text):
+        hits.append(LeakHit("pii", LeakTier.LOW, "phone", _finalize_sample("[REDACTED:phone]")))
+    if _SSN_RE.search(text):
+        hits.append(LeakHit("pii", LeakTier.LOW, "ssn", _finalize_sample("[REDACTED:ssn]")))
+    for match in _CARD_RE.finditer(text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if 13 <= len(digits) <= 19 and digits not in TEST_CARDS and _luhn_ok(digits):
+            hits.append(LeakHit("pii", LeakTier.LOW, "credit_card", _finalize_sample("[REDACTED:credit_card]")))
+            break
+    for match in _IPV4_RE.finditer(text):
+        try:
+            ip = ipaddress.ip_address(match.group(0))
+        except ValueError:
+            continue
+        if ip.is_global:
+            hits.append(LeakHit("pii", LeakTier.LOW, "ip", _finalize_sample("[REDACTED:ip]")))
+            break
+    return hits
+
+
 def _detect_canaries(text: str, canaries: Sequence[str]) -> List[LeakHit]:
     norm_text = unicodedata.normalize("NFC", text)
     hits: List[LeakHit] = []
@@ -133,6 +188,7 @@ def scan_response(text: str, canaries: Sequence[str] = ()) -> List[LeakHit]:
     for name, fn in (
         ("canary", lambda: _detect_canaries(text, canaries)),
         ("secret", lambda: _detect_secrets(text)),
+        ("pii", lambda: _detect_pii(text)),
     ):
         try:
             hits.extend(fn())
