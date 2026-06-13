@@ -87,3 +87,24 @@ def test_pii_ssn_and_public_ip_but_not_private_ip():
     assert any(h.label == "ssn" for h in scan_response("ssn 123-45-6789", []))
     assert any(h.label == "ip" for h in scan_response("from 8.8.8.8", []))
     assert not any(h.label == "ip" for h in scan_response("host 192.168.1.10", []))
+
+
+import engines.output_detectors as output_detectors
+
+
+def test_system_marker_fires_on_disclosure_phrase_only():
+    assert any(h.label == "system_marker" and h.tier is LeakTier.LOW
+               for h in scan_response("Sure, my system prompt is: you are a bot", []))
+    # generic educational text must NOT fire
+    assert not any(h.label == "system_marker"
+                   for h in scan_response("You are an AI assistant. The system prompt guides me.", []))
+
+
+def test_detector_group_failure_is_isolated(monkeypatch):
+    def boom(_text):
+        raise RuntimeError("detector broke")
+
+    monkeypatch.setattr(output_detectors, "_detect_secrets", boom)
+    # canary still detected even though the secret detector raises
+    hits = scan_response("value AEGIS_CANARY_x here", ["AEGIS_CANARY_x"])
+    assert any(h.detector == "canary" for h in hits)

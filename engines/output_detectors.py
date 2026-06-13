@@ -160,6 +160,22 @@ def _detect_pii(text: str) -> List[LeakHit]:
     return hits
 
 
+_SYSTEM_MARKERS = (
+    "my system prompt is",
+    "the hidden instruction says",
+    "developer message:",
+    "system message:",
+    "i was instructed to",
+)
+
+
+def _detect_system_markers(text: str) -> List[LeakHit]:
+    lowered = text.lower()
+    if any(marker in lowered for marker in _SYSTEM_MARKERS):
+        return [LeakHit("system_marker", LeakTier.LOW, "system_marker", _finalize_sample("[REDACTED:system_marker]"))]
+    return []
+
+
 def _detect_canaries(text: str, canaries: Sequence[str]) -> List[LeakHit]:
     norm_text = unicodedata.normalize("NFC", text)
     hits: List[LeakHit] = []
@@ -189,6 +205,7 @@ def scan_response(text: str, canaries: Sequence[str] = ()) -> List[LeakHit]:
         ("canary", lambda: _detect_canaries(text, canaries)),
         ("secret", lambda: _detect_secrets(text)),
         ("pii", lambda: _detect_pii(text)),
+        ("system_marker", lambda: _detect_system_markers(text)),
     ):
         try:
             hits.extend(fn())
