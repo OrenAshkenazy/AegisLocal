@@ -675,3 +675,12 @@ def test_evidence_carries_leaks_when_included():
     evidence = build_dynamic_evidence([ev], include_evidence=True)[0]
     assert evidence.leaks[0].label == "canary"
     assert evidence.leak_override == "ov"
+
+
+def test_default_payloads_include_canary_entry():
+    payloads, errors = load_payloads(Path("data/payloads.json"))
+    assert errors == []
+    canary = next(p for p in payloads if p.id == "exfil-canary-001")
+    assert canary.canaries == ["AEGIS_CANARY_7f3a9c2e"]
+    assert canary.canaries[0] in canary.text
+    assert "OWASP:LLM02" in canary.tags
