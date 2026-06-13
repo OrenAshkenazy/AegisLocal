@@ -423,11 +423,11 @@ local behavior and dependency-risk baseline.
 | OWASP 2025 Risk | Current Coverage | Notes |
 | --- | --- | --- |
 | **LLM01: Prompt Injection** | Strong | Direct prompt injection, jailbreak/safety bypass, policy evasion, and RAG instruction-override payloads. |
-| **LLM02: Sensitive Information Disclosure** | Medium | PII extraction, PII leakage, sensitive data exfiltration, and private-context disclosure probes. |
+| **LLM02: Sensitive Information Disclosure** | Medium | Tool-abuse data-leak probes and a sensitive data exfiltration payload tagged `LLM02`. Note that the PII extraction/leakage and several exfiltration payloads are tagged `LLM06` rather than `LLM02`. |
 | **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV. |
-| **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, dataset, or model provenance checks yet. |
+| **LLM04: Data and Model Poisoning** | Low | Jailbreak/safety-bypass, policy evasion, toxicity, and harmful-instruction payloads are tagged `LLM04`, but these are runtime behavioral probes. There are no actual training, fine-tuning, dataset, or model provenance checks yet. |
 | **LLM05: Improper Output Handling** | Partial | Insecure code generation probes are included, but AegisLocal does not yet test downstream application sinks such as SQL, shell, browser, or HTML rendering contexts. |
-| **LLM06: Excessive Agency** | Partial | Tool-abuse prompts test model intent, but there is no real tool sandbox or agent execution simulation yet. |
+| **LLM06: Excessive Agency** | Partial | Tool-abuse prompts plus the PII extraction/leakage and exfiltration payloads are tagged `LLM06` and test model intent, but there is no real tool sandbox or agent execution simulation yet. |
 | **LLM07: System Prompt Leakage** | Strong | Dedicated system prompt extraction and hidden-instruction disclosure payloads. |
 | **LLM08: Vector and Embedding Weaknesses** | Partial | RAG manipulation prompts are included, but there is no vector database, embedding poisoning, retrieval leakage, or similarity attack testing yet. |
 | **LLM09: Misinformation** | Not covered | No factuality, citation, hallucination, or overreliance tests yet. |
