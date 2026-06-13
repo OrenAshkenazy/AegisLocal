@@ -844,6 +844,7 @@ async def run_dynamic_scan(
     include_evidence: bool = False,
     include_passed_assessments: bool = False,
     calibrate_judge_model: bool = True,
+    output_leak_detection: bool = True,
     on_progress: Optional[Callable[[str], None]] = None,
     *,
     payloads: Optional[List[Payload]] = None,
@@ -893,6 +894,7 @@ async def run_dynamic_scan(
                 session,
                 target_timeout_seconds,
                 judge_timeout_seconds,
+                output_leak_detection=output_leak_detection,
             )
             if on_progress:
                 verdict = result.verdict or "ERROR"
