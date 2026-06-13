@@ -229,3 +229,13 @@ async def test_license_scan_mode_expands_project_root_for_default_boms(tmp_path,
     assert (project / "bom.aibom.cdx.json").exists()
     assert not (cwd / "~" / "dev" / "familia-ai" / "bom.sbom.cdx.json").exists()
     assert not (cwd / "bom.sbom.cdx.json").exists()
+
+
+import inspect
+import main
+
+
+def test_run_scan_has_output_leak_detection_param():
+    sig = inspect.signature(main.run_scan)
+    assert "output_leak_detection" in sig.parameters
+    assert sig.parameters["output_leak_detection"].default is True

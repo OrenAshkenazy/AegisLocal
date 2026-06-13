@@ -917,6 +917,7 @@ async def run_scan(
     aibom_file: Optional[Path],
     license_cache_file: Optional[Path],
     console: ScanConsole,
+    output_leak_detection: bool = True,
 ) -> ScanReport:
     start = time.monotonic()
     project_root = project_root.expanduser().resolve()
@@ -1004,6 +1005,7 @@ async def run_scan(
                 include_evidence=include_evidence,
                 include_passed_assessments=include_passed_assessments,
                 calibrate_judge_model=calibrate_judge_model,
+                output_leak_detection=output_leak_detection,
                 on_progress=dynamic_cb,
                 payloads=payloads,
                 initial_errors=payload_errors,
@@ -1222,6 +1224,11 @@ def scan(
         "--judge-calibration/--no-judge-calibration",
         help="Run deterministic judge calibration before dynamic payload evaluation.",
     ),
+    output_leak_detection: bool = typer.Option(
+        True,
+        "--output-leak-detection/--no-output-leak-detection",
+        help="Detect leaked secrets, canaries, and selected PII in dynamic target responses.",
+    ),
     license_scan: bool = typer.Option(
         False,
         "--license-scan/--no-license-scan",
@@ -1322,6 +1329,7 @@ def scan(
             include_passed_assessments=verbose,
             calibrate_judge_model=calibrate_judge_model,
             run_static=run_static,
+            output_leak_detection=output_leak_detection,
             run_dynamic=run_dynamic,
             license_scan=effective_license_scan,
             license_enrich=license_enrich,
