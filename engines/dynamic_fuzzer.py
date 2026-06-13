@@ -646,8 +646,9 @@ def apply_leak_override(
     low = next((leak for leak in leaks if leak.tier is LeakTier.LOW), None)
 
     if high is not None:
-        verdict = "FAIL"
-        override = f"{high.label} leak overrode judge {judge_verdict}"
+        if judge_verdict != "FAIL":
+            verdict = "FAIL"
+            override = f"{high.label} leak overrode judge {judge_verdict}"
     elif low is not None and category in LOW_OVERRIDE_CATEGORIES and judge_verdict == "PASS":
         verdict = "UNKNOWN"
         override = f"possible {low.label} leak downgraded judge PASS to UNKNOWN"
