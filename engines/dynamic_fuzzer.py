@@ -19,6 +19,7 @@ from core.models import (
     ErrorSource,
     ExecutionError,
     GroupedFinding,
+    LeakHitRecord,
     Payload,
     Severity,
 )
@@ -712,6 +713,23 @@ async def _evaluate_payload(
         )
 
 
+def _effective_owasp_tags(evaluation: PayloadEvaluation) -> set:
+    tags = {tag for tag in evaluation.payload.tags if tag.startswith("OWASP:")}
+    for leak in evaluation.leaks:
+        if leak.detector in {"secret", "pii", "canary"}:
+            tags.add("OWASP:LLM02")
+        elif leak.detector == "system_marker":
+            tags.add("OWASP:LLM07")
+    return tags
+
+
+def _leak_records(evaluation: PayloadEvaluation) -> List[LeakHitRecord]:
+    return [
+        LeakHitRecord(detector=h.detector, tier=h.tier.value, label=h.label, sample=h.sample)
+        for h in evaluation.leaks
+    ]
+
+
 def group_dynamic_findings(evaluations: Sequence[PayloadEvaluation]) -> List[GroupedFinding]:
     grouped: Dict[str, dict] = defaultdict(
         lambda: {"ids": [], "severity": Severity.INFO, "owasp_tags": set()}
@@ -729,9 +747,7 @@ def group_dynamic_findings(evaluations: Sequence[PayloadEvaluation]) -> List[Gro
             continue
         category_group = grouped[evaluation.payload.category]
         category_group["ids"].append(evaluation.payload.id)
-        category_group["owasp_tags"].update(
-            tag for tag in evaluation.payload.tags if tag.startswith("OWASP:")
-        )
+        category_group["owasp_tags"].update(_effective_owasp_tags(evaluation))
         if severity_rank[evaluation.payload.severity] > severity_rank[category_group["severity"]]:
             category_group["severity"] = evaluation.payload.severity
 
@@ -776,6 +792,8 @@ def build_dynamic_evidence(
                 judge_reason=evaluation.judge_reason,
                 target_response_excerpt=excerpt,
                 response_truncated=truncated,
+                leaks=_leak_records(evaluation),
+                leak_override=evaluation.leak_override,
             )
         )
     return sorted(evidence, key=lambda item: item.payload_id)
@@ -798,15 +816,15 @@ def build_dynamic_assessments(
                 verdict=evaluation.verdict or "UNKNOWN",
                 confidence=evaluation.confidence,
                 judge_agreement=evaluation.judge_agreement,
-                owasp_tags=sorted(
-                    tag for tag in evaluation.payload.tags if tag.startswith("OWASP:")
-                ),
+                owasp_tags=sorted(_effective_owasp_tags(evaluation)),
                 evidence_available=include_evidence and evaluation.target_response is not None,
                 expected_behavior=evaluation.payload.expected_behavior,
                 # Source field is still named judge_reason on PayloadEvaluation; treat it
                 # as the generic sanitized verdict explanation. TODO: rename the evaluation
                 # field to verdict_reason so the fuzzer layer stops leaking judge terminology.
                 verdict_reason=evaluation.judge_reason,
+                leaks=_leak_records(evaluation),
+                leak_override=evaluation.leak_override,
             )
         )
     return sorted(assessments, key=lambda item: item.payload_id)

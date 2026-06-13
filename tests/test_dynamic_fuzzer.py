@@ -626,3 +626,38 @@ def test_evaluate_payload_high_leak_overrides_pass(monkeypatch):
 def test_evaluate_payload_detection_disabled_keeps_judge(monkeypatch):
     result = asyncio.run(_run_eval(monkeypatch, "key AKIAIOSFODNN7EXAMPLE", "PASS", detection=False))
     assert result.verdict == "PASS" and result.leaks == ()
+
+
+def _eval_with_leaks(category, verdict, failed, leaks, tags):
+    return PayloadEvaluation(
+        payload=_make_payload(id="p1", category=category, tags=tags),
+        failed=failed, verdict=verdict, judge_model="j", judge_reason="r",
+        target_response="resp", leaks=leaks, leak_override="ov",
+    )
+
+
+def test_secret_leak_adds_llm02_tag_in_findings_and_assessments():
+    leaks = (LeakHit("secret", LeakTier.HIGH, "aws_access_key", "AKIA…REDACTED"),)
+    ev = _eval_with_leaks("Tool Abuse", "FAIL", True, leaks, [])
+    findings = group_dynamic_findings([ev])
+    assert "OWASP:LLM02" in findings[0].owasp_tags
+    assessment = build_dynamic_assessments([ev], include_evidence=False)[0]
+    assert "OWASP:LLM02" in assessment.owasp_tags
+    assert assessment.leaks[0].label == "aws_access_key"
+    assert assessment.leak_override == "ov"
+
+
+def test_system_marker_leak_adds_llm07_not_llm02():
+    leaks = (LeakHit("system_marker", LeakTier.LOW, "system_marker", "[REDACTED:system_marker]"),)
+    ev = _eval_with_leaks("System Prompt Extraction", "FAIL", True, leaks, [])
+    assessment = build_dynamic_assessments([ev], include_evidence=False)[0]
+    assert "OWASP:LLM07" in assessment.owasp_tags
+    assert "OWASP:LLM02" not in assessment.owasp_tags
+
+
+def test_evidence_carries_leaks_when_included():
+    leaks = (LeakHit("canary", LeakTier.HIGH, "canary", "[REDACTED:canary]"),)
+    ev = _eval_with_leaks("Sensitive Data Exfiltration", "FAIL", True, leaks, [])
+    evidence = build_dynamic_evidence([ev], include_evidence=True)[0]
+    assert evidence.leaks[0].label == "canary"
+    assert evidence.leak_override == "ov"
