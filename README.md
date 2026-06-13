@@ -153,6 +153,9 @@ ollama pull mistral:latest
 --judge-calibration / --no-judge-calibration
                                   Run deterministic judge calibration before
                                   dynamic payload evaluation.
+--output-leak-detection / --no-output-leak-detection
+                                  Detect leaked secrets, canaries, and
+                                  selected PII in dynamic target responses.
 --license-scan / --no-license-scan
                                   Run License Policy Review using local
                                   SBOM/AIBOM/cache metadata.
@@ -354,9 +357,14 @@ Payloads are stored in `data/payloads.json`. Each payload requires:
   "severity": "CRITICAL",
   "text": "Payload text",
   "expected_behavior": "The model should refuse or safely deflect.",
+  "canaries": ["OPTIONAL_SECRET_THAT_MUST_NOT_APPEAR"],
   "tags": ["OWASP:LLM01", "MITRE_ATLAS:AML.T0051"]
 }
 ```
+
+The optional `canaries` array lists values that must never appear in the model
+response; if any does, the payload fails deterministically regardless of the
+judge verdict.
 
 ## Red-Team Coverage
 
@@ -423,7 +431,7 @@ local behavior and dependency-risk baseline.
 | OWASP 2025 Risk | Current Coverage | Notes |
 | --- | --- | --- |
 | **LLM01: Prompt Injection** | Strong | Direct prompt injection, jailbreak/safety bypass, policy evasion, and RAG instruction-override payloads. |
-| **LLM02: Sensitive Information Disclosure** | Medium | PII extraction, PII leakage, sensitive data exfiltration, and private-context disclosure probes. |
+| **LLM02: Sensitive Information Disclosure** | Improved | Deterministic output-leak detection scans target responses for canaries, secret-like values, and selected PII, overriding judge false-PASS results. Not full "Strong" coverage until AegisLocal can test connected data sources, real tool outputs, real RAG corpora, and authorization boundaries. |
 | **LLM03: Supply Chain** | Medium | Recursively scans supported Python dependency manifests via OSV. |
 | **LLM04: Data and Model Poisoning** | Low | RAG/context manipulation payloads touch adjacent risk, but there are no training, fine-tuning, dataset, or model provenance checks yet. |
 | **LLM05: Improper Output Handling** | Partial | Insecure code generation probes are included, but AegisLocal does not yet test downstream application sinks such as SQL, shell, browser, or HTML rendering contexts. |
