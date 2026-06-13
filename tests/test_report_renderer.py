@@ -533,3 +533,18 @@ def test_finding_counts_none_when_clean_pass():
     from core.report_renderer import _finding_count_lines
     report = _dynamic_report(assessments=[], errors=[], total=5)
     assert _finding_count_lines(report) == ["None"]
+
+
+def test_failed_payload_renders_leak_records():
+    from core.models import DynamicFindingAssessment, LeakHitRecord, Severity
+    assessment = DynamicFindingAssessment(
+        payload_id="tool-004", category="Tool Abuse", severity=Severity.HIGH,
+        verdict="FAIL", confidence="HIGH", judge_agreement="1/1",
+        verdict_reason="aws_access_key leak overrode judge PASS",
+        leaks=[LeakHitRecord(detector="secret", tier="HIGH", label="aws_access_key", sample="AKIA…REDACTED")],
+        leak_override="aws_access_key leak overrode judge PASS",
+    )
+    report = _dynamic_report(assessments=[assessment], total=1)
+    joined = "\n".join(_failed_payloads_lines(report))
+    assert "Leak:     aws_access_key (HIGH)" in joined
+    assert "overrode judge PASS" in joined  # via the Observed/verdict_reason line

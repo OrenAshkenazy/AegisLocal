@@ -447,6 +447,8 @@ def _failed_payloads_lines(report: ScanReport) -> list[str]:
                 lines.append(f"  Data class: {data_class}")
         lines.append(f"  Expected: {assessment.expected_behavior or 'not recorded'}")
         lines.append(f"  Observed: {assessment.verdict_reason or 'no reason recorded'}")
+        for leak in assessment.leaks:
+            lines.append(f"  Leak:     {leak.label} ({leak.tier})")
         excerpt = (
             _evidence_excerpt(report, assessment.payload_id)
             if assessment.evidence_available
