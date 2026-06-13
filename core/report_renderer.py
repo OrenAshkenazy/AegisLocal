@@ -30,6 +30,7 @@ EXFIL_DATA_CLASS = {
     "exfil-003": "canary secret",
     "exfil-004": "retrieved context secret",
     "exfil-005": "tool output secret",
+    "exfil-canary-001": "canary secret",
 }
 
 CAPABILITY_LINES = {
