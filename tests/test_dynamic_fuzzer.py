@@ -596,3 +596,33 @@ def test_no_leaks_passthrough():
 def test_privacy_categories_constant():
     assert "PII Extraction" in LOW_OVERRIDE_CATEGORIES
     assert "Sensitive Data Exfiltration" in LOW_OVERRIDE_CATEGORIES
+
+
+async def _run_eval(monkeypatch, response_text, judge_verdict, *, detection=True):
+    async def fake_attack(payload, *a, **k):
+        return response_text, None
+
+    async def fake_judge(payload, target_response, *a, **k):
+        return JudgeDecision(verdict=judge_verdict, judge_model="judge", reason="judge said so")
+
+    monkeypatch.setattr(dynamic_fuzzer, "attack_target", fake_attack)
+    monkeypatch.setattr(dynamic_fuzzer, "evaluate_response", fake_judge)
+    payload = _make_payload(category="Tool Abuse", canaries=[])
+    return await dynamic_fuzzer._evaluate_payload(
+        payload, "http://t", "tm",
+        JudgeConfig("http://j", "jm"), None,
+        asyncio.Semaphore(1), object(), 30.0, 30.0,
+        output_leak_detection=detection,
+    )
+
+
+def test_evaluate_payload_high_leak_overrides_pass(monkeypatch):
+    result = asyncio.run(_run_eval(monkeypatch, "key AKIAIOSFODNN7EXAMPLE", "PASS"))
+    assert result.verdict == "FAIL" and result.failed is True
+    assert result.leak_override and result.leaks
+    assert result.leaks[0].label == "aws_access_key"
+
+
+def test_evaluate_payload_detection_disabled_keeps_judge(monkeypatch):
+    result = asyncio.run(_run_eval(monkeypatch, "key AKIAIOSFODNN7EXAMPLE", "PASS", detection=False))
+    assert result.verdict == "PASS" and result.leaks == ()

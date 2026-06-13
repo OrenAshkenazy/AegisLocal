@@ -667,6 +667,7 @@ async def _evaluate_payload(
     session: aiohttp.ClientSession,
     target_timeout_seconds: float,
     judge_timeout_seconds: float,
+    output_leak_detection: bool = True,
 ) -> PayloadEvaluation:
     async with semaphore:
         target_response, target_error = await attack_target(
@@ -687,26 +688,27 @@ async def _evaluate_payload(
             session,
             judge_timeout_seconds,
         )
-        if decision.verdict is None:
-            return PayloadEvaluation(
-                payload=payload,
-                failed=False,
-                verdict="UNKNOWN",
-                confidence=decision.confidence,
-                judge_agreement=decision.judge_agreement,
-                target_response=target_response,
-                errors=decision.errors,
-            )
+
+        leaks: Tuple[LeakHit, ...] = ()
+        if output_leak_detection:
+            leaks = tuple(scan_response(target_response, payload.canaries))
+
+        judge_verdict = decision.verdict or "UNKNOWN"
+        verdict, failed, leak_override, verdict_reason = apply_leak_override(
+            payload.category, judge_verdict, decision.reason, leaks
+        )
         return PayloadEvaluation(
             payload=payload,
-            failed=decision.verdict == "FAIL",
-            verdict=decision.verdict,
+            failed=failed,
+            verdict=verdict,
             judge_model=decision.judge_model,
-            judge_reason=decision.reason,
+            judge_reason=verdict_reason,
             confidence=decision.confidence,
             judge_agreement=decision.judge_agreement,
             target_response=target_response,
             errors=decision.errors,
+            leaks=leaks,
+            leak_override=leak_override,
         )
 
 
