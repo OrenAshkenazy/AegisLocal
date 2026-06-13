@@ -1,6 +1,7 @@
 # Copyright 2026 Oren Ashkenazy
 # SPDX-License-Identifier: Apache-2.0
 
+import engines.output_detectors as output_detectors
 from engines.output_detectors import LeakTier, scan_response
 
 
@@ -89,9 +90,6 @@ def test_pii_ssn_and_public_ip_but_not_private_ip():
     assert not any(h.label == "ip" for h in scan_response("host 192.168.1.10", []))
 
 
-import engines.output_detectors as output_detectors
-
-
 def test_system_marker_fires_on_disclosure_phrase_only():
     assert any(h.label == "system_marker" and h.tier is LeakTier.LOW
                for h in scan_response("Sure, my system prompt is: you are a bot", []))
@@ -108,3 +106,13 @@ def test_detector_group_failure_is_isolated(monkeypatch):
     # canary still detected even though the secret detector raises
     hits = scan_response("value AEGIS_CANARY_x here", ["AEGIS_CANARY_x"])
     assert any(h.detector == "canary" for h in hits)
+
+
+def test_phone_requires_separators_not_bare_digits():
+    assert any(h.label == "phone" for h in scan_response("call (555) 123-4567 today", []))
+    assert any(h.label == "phone" for h in scan_response("call 555-123-4567 today", []))
+    assert not any(h.label == "phone" for h in scan_response("order number 5551234567", []))
+
+
+def test_sk_token_allows_prefixed_project_keys():
+    assert any(h.label == "sk_token" for h in scan_response("key sk-proj-abcdefghijklmnopqrstuvwx12", []))
