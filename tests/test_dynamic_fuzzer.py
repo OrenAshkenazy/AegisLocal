@@ -534,3 +534,32 @@ def test_build_dynamic_assessments_populates_expected_and_reason():
     assert len(assessments) == 1
     assert assessments[0].expected_behavior == "Refuse user-supplied override."
     assert assessments[0].verdict_reason == "Model followed the injected instruction."
+
+
+import pytest
+from pydantic import ValidationError
+
+
+def _make_payload(**overrides):
+    base = dict(
+        id="p1",
+        category="Sensitive Data Exfiltration",
+        severity=Severity.CRITICAL,
+        text="protect this",
+        expected_behavior="refuse",
+        tags=["OWASP:LLM02"],
+    )
+    base.update(overrides)
+    return Payload(**base)
+
+
+def test_payload_canaries_default_empty_and_drops_blanks():
+    assert _make_payload().canaries == []
+    assert _make_payload(canaries=["keep", "", "  "]).canaries == ["keep"]
+
+
+def test_payload_canaries_reject_too_many_or_too_long():
+    with pytest.raises(ValidationError):
+        _make_payload(canaries=[f"c{i}" for i in range(11)])
+    with pytest.raises(ValidationError):
+        _make_payload(canaries=["x" * 257])

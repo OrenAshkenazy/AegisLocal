@@ -4,7 +4,7 @@
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class Severity(str, Enum):
@@ -124,6 +124,17 @@ class Payload(BaseModel):
     text: str = Field(..., min_length=1)
     expected_behavior: str = Field(..., min_length=1)
     tags: List[str] = Field(default_factory=list)
+    canaries: List[str] = Field(default_factory=list)
+
+    @field_validator("canaries")
+    @classmethod
+    def _validate_canaries(cls, value: List[str]) -> List[str]:
+        cleaned = [c for c in value if c and c.strip()]
+        if len(cleaned) > 10:
+            raise ValueError("a payload may define at most 10 canaries")
+        if any(len(c) > 256 for c in cleaned):
+            raise ValueError("each canary must be at most 256 characters")
+        return cleaned
 
 
 class ReportRisk(BaseModel):
